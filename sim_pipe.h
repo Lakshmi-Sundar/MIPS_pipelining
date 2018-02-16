@@ -2,50 +2,87 @@
 #define SIM_PIPE_H_
 
 #include <stdio.h>
+#include <string.h>
 #include <inttypes.h>
+#include <stdlib.h>
+#include <iostream>
+#include <iomanip>
+#include <cassert>
+#include <map>
+#include <cstdlib>
+#include <malloc.h>
+
+#include <vector>
+#include <algorithm>
 
 #define UNDEFINED 0xFFFFFFFF //constant used to initialize registers
+#define DATA_UNDEF 0xFF
 #define NUM_SP_REGISTERS 9
 #define NUM_GP_REGISTERS 32
 #define NUM_OPCODES 23
 #define NUM_STAGES 5
 
+using namespace std;
 typedef enum {PC, NPC, IR, A, B, IMM, COND, ALU_OUTPUT, LMD} sp_register_t;
 
 // The NOP instruction should be automatically inserted by the processor to implement pipeline bubbles
 typedef enum {LW, SW, ADD, SUB, XOR, OR, AND, MULT, DIV, ADDI, SUBI, XORI, ORI, ANDI, BEQZ, BNEZ, BLTZ, BGTZ, BLEZ, BGEZ, JUMP, EOP, NOP} opcode_t;
+const string opcode_str[] = {"LW", "SW", "ADD", "SUB", "XOR", "OR", "AND", "MULT", "DIV", "ADDI", "SUBI", "XORI", "ORI", "ANDI", "BEQZ", "BNEZ", "BLTZ", "BGTZ", "BLEZ", "BGEZ", "JUMP", "EOP", "NOP"};
 
 typedef enum {IF, ID, EX, MEM, WB} stage_t;
+
+
+typedef struct instructT* instructPT;
+
+struct instructT{
+   opcode_t           opcode;
+   uint32_t           dst;
+   uint32_t           src1;
+   uint32_t           src2;
+   uint32_t           imm;
+   bool               dstValid;
+   bool               src1Valid;
+   bool               src2Valid;
+   instructT(){
+      nop();
+   }
+
+   void nop(){
+      opcode     = NOP;
+      dst        = UNDEFINED;
+      src1       = UNDEFINED;
+      src2       = UNDEFINED;
+      imm        = UNDEFINED;
+      dstValid   = false;
+      src1Valid  = false;
+      src2Valid  = false;
+   }
+
+   void print() {
+      cout << "opcode: " << opcode_str[opcode] << ", dst: " << dst << ", src1: " << src1 << ", src2: " << src2 << ", imm: " << imm << endl;
+   }
+};
+
 
 class sim_pipe{
 
 public:
-
-   typedef struct instructT* instructPT;
-
-   struct instructT{
-      opcode_t           opcode;
-      uint32_t           opr0;
-      uint32_t           opr1;
-      uint32_t           opr2;
-      uint32_t           imm;
-   };
-
    struct gprFileT{
-      uint32_t       gprValue;
+      unsigned char  value;
       bool           busy;
    };
 
    int               cycleCount;
    int               instCount;
+   int               stallCount;
 
-   gprFileT          gprFile[NUM_GPR];
+   gprFileT          gprFile[NUM_GP_REGISTERS];
    uint32_t          sprFile[NUM_SP_REGISTERS];
    uint32_t          pipeReg[NUM_STAGES][NUM_SP_REGISTERS];
 
    instructT         instrArray[NUM_STAGES];
 
-   uchar*            dataMemory;
+   unsigned char*    data_memory;
    instructPT        *instMemory;
    unsigned          dataMemSize;
    unsigned          memLatency;
@@ -58,13 +95,18 @@ public:
    //de-allocates the simulator
    ~sim_pipe();
 
+   instructT fetchInstruction ( uint32_t pc );
+
    void     fetch();
-   void     decode(); 
-   uint32_t agen();
-   uint32_t alu();
+   bool     decode(); 
+   uint32_t agen(instructT instruct);
+   uint32_t alu (uint32_t value1, uint32_t value2, opcode_t opcode);
    void     execute();
    void     memory();
    void     writeBack();
+
+   int parse(const char *filename);
+   int  labelToPC( const char* filename, const char* label );
 
    //loads the assembly program in file "filename" in instruction memory at the specified address
    void load_program(const char *filename, unsigned base_address=0x0);
