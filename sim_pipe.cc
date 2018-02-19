@@ -2,8 +2,8 @@
 
 
 //used for debugging purposes
-//static const char *reg_names[NUM_SP_REGISTERS] = {"PC", "NPC", "IR", "A", "B", "IMM", "COND", "ALU_OUTPUT", "LMD"};
-//static const char *stage_names[NUM_STAGES] = {"IF", "ID", "EX", "MEM", "WB"};
+static const char *reg_names[NUM_SP_REGISTERS] = {"PC", "NPC", "IR", "A", "B", "IMM", "COND", "ALU_OUTPUT", "LMD"};
+static const char *stage_names[NUM_STAGES] = {"IF", "ID", "EX", "MEM", "WB"};
 
 map <string, opcode_t> opcode_2str = { {"LW", LW}, {"SW", SW}, {"ADD", ADD}, {"SUB", SUB}, {"XOR", XOR}, {"OR", OR}, {"AND", AND}, {"MULT", MULT}, {"DIV", DIV}, {"ADDI", ADDI}, {"SUBI", SUBI}, {"XORI", XORI}, {"ORI", ORI}, {"ANDI", ANDI}, {"BEQZ", BEQZ}, {"BNEZ", BNEZ}, {"BLTZ", BLTZ}, {"BGTZ", BGTZ}, {"BLEZ", BLEZ}, {"BGEZ", BGEZ}, {"JUMP", JUMP}, {"EOP", EOP}, {"NOP", NOP} };
 
@@ -16,48 +16,40 @@ sim_pipe::sim_pipe(unsigned mem_size, unsigned mem_latency){
 }
 
 //fetching instruction from the instruction memory
-instructT sim_pipe::fetchInstruction ( uint32_t pc ) {
+instructT sim_pipe::fetchInstruction ( unsigned pc ) {
    uint32_t index = (pc - this->baseAddress)/4;
    return *(instMemory[index]);
 }
 
 void sim_pipe::fetch() {
    // NPC is current PC
-   this->pipeReg[IF][PC]        = (this->pipeReg[MEM][COND]) ? this->pipeReg[EX][NPC] : this->pipeReg[IF][NPC];
 
-   //fetching instruction from instruction memory
-   // FIXME: LHS is T, RHS is PT
    instructT instruct           = fetchInstruction(this->pipeReg[IF][PC]);
+   set_sp_register(PC, IF, get_sp_register(COND, MEM) ? get_sp_register(NPC, EX) : (get_sp_register(PC, IF) + 4));
 
-   //moving instruction into ID stage
+   this->pipeReg[ID][NPC]       = this->pipeReg[IF][PC];
+
    this->instrArray[ID]         = instruct;
-   this->pipeReg[IF][NPC]       = this->pipeReg[IF][PC] + 4;
-
-   cout << opcode_str[instruct.opcode] << endl;
-
+   
    //FIXME: Updating IR register
 }
 
 bool sim_pipe::decode() {
    //local variable for instruction
    instructT instruct                   = this->instrArray[ID];
+   this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
 
    if(( instruct.src1Valid && this->gprFile[instruct.src1].busy )
                                         | (instruct.src2Valid && this->gprFile[instruct.src2].busy)) {
-      instruct.opcode                   = NOP;
-      instruct.src1                     = UNDEFINED;
-      instruct.src2                     = UNDEFINED;
-      instruct.imm                      = UNDEFINED;
-      this->instrArray[EX]              = instruct;
-
+      this->instrArray[EX].stall();
       for(int i = 0; i < NUM_SP_REGISTERS; i++) {
          this->pipeReg[EX][i]           = UNDEFINED;
       }
       return true;
    }
 
-   this->pipeReg[EX][A]                 = instruct.src1;
-   this->pipeReg[EX][B]                 = instruct.src2;
+   this->pipeReg[EX][A]                 = (instruct.src1Valid) ? get_gp_register(instruct.src1) : UNDEFINED;
+   this->pipeReg[EX][B]                 = (instruct.src2Valid) ? get_gp_register(instruct.src2) : UNDEFINED;
    this->pipeReg[EX][IMM]               = instruct.imm;
 
    if(instruct.dstValid)
@@ -83,13 +75,16 @@ uint32_t sim_pipe::alu (uint32_t value1, uint32_t value2, opcode_t opcode){
       return value1 & value2;
    else if(opcode == OR || opcode == ORI)
       return value1 | value2;
+   //FIXME: add MULT and DIV
    else return UNDEFINED;
 }
 
 void sim_pipe::execute() {
 
    //local variable for the instruction
-   instructT instruct         = this->instrArray[EX]; 
+   //FIXME: Update COND registers
+   //FIXME: Add memory latency of memLatency+1
+   instructT instruct           = this->instrArray[EX]; 
 
    switch(instruct.opcode) {
       case LW:{
@@ -149,9 +144,15 @@ void sim_pipe::execute() {
                    break;
                 }
       case NOP:{
-                  for(int i = 0; i < NUM_SP_REGISTERS; i++) {
-                     this->pipeReg[EX][i]           = UNDEFINED;
+                  if (instruct.is_stall) {
+                     for(int i = 0; i < NUM_SP_REGISTERS; i++) {
+                        this->pipeReg[MEM][i]           = UNDEFINED;
+                        this->pipeReg[MEM][COND]        = 0;
+                     }
                   }
+                  break;
+               }
+      case EOP:{
                   break;
                }
       default:
@@ -159,16 +160,18 @@ void sim_pipe::execute() {
                break;
 
    }
+   this->pipeReg[MEM][B] = this->pipeReg[EX][B];
    this->instrArray[MEM] = instruct;
 }
 
 //Loads / stores to the data memory
 void sim_pipe::memory() {
 
-   instructT instruct                                = this->instrArray[MEM]; 
+   instructT instruct                     = this->instrArray[MEM]; 
+   pipeReg[WB][LMD]                       = UNDEFINED;
    switch(instruct.opcode) {
       case LW:{
-                 this->gprFile[instruct.dst].value = this->data_memory[this->pipeReg[MEM][ALU_OUTPUT]];
+                 pipeReg[WB][LMD]         = data_memory[pipeReg[MEM][ALU_OUTPUT]];
                  break;
               }
 
@@ -177,19 +180,25 @@ void sim_pipe::memory() {
                  break;
               }
       case NOP:{
+                  if (instruct.is_stall) {
+                     for(int i = 0; i < NUM_SP_REGISTERS; i++) {
+                        this->pipeReg[WB][i]           = UNDEFINED;
+                     }
+                  }
                   break;
                }
       default: break;
    }
-   this->instrArray[WB]                              = instruct;
+   this->instrArray[WB]                    = instruct;
+   pipeReg[WB][ALU_OUTPUT]                 = pipeReg[MEM][ALU_OUTPUT];
 }
 
 //Updates value of GPR according to destination
 void sim_pipe::writeBack() {
-   instructT instruct               = this->instrArray[WB]; 
-   if(instruct.dst != UNDEFINED) {
-   this->gprFile[instruct.dst].value      = this->pipeReg[MEM][ALU_OUTPUT];
-   this->gprFile[instruct.dst].busy          = false;
+   instructT instruct                = this->instrArray[WB]; 
+   if(instruct.dstValid) {
+      set_gp_register(instruct.dst, (instruct.opcode == LW) ? pipeReg[WB][LMD] : pipeReg[WB][ALU_OUTPUT]);
+      this->instrArray[WB].is_stall = false;
    }
 }
 
@@ -200,7 +209,7 @@ sim_pipe::~sim_pipe(){
 //parse trace and load it intro instruction memory
 void sim_pipe::load_program(const char *filename, unsigned base_address){
    parse(filename);
-   this->pipeReg[IF][NPC] = base_address;
+   this->pipeReg[IF][PC]  = base_address;
    this->baseAddress      = base_address;
 }
 
@@ -211,6 +220,7 @@ void sim_pipe::run(unsigned cycles){
    execute();
    if ( !decode() )
       fetch();
+   cycleCount++;
 }
 
 //resets the state of the simulator
@@ -232,7 +242,7 @@ void sim_pipe::reset(){
 
    //initializing GPRs to UNDEFINED
    for(int i = 0; i < NUM_GP_REGISTERS; i++) {
-      this->gprFile[i].value = DATA_UNDEF;
+      this->gprFile[i].value = UNDEFINED;
    }
 
    //initializing pipeline registers to UNDEFINED
@@ -244,7 +254,11 @@ void sim_pipe::reset(){
    }
 }
 
-unsigned sim_pipe::get_sp_register(sp_register_t reg, stage_t s){
+void sim_pipe::set_sp_register(sp_register_t reg, stage_t s, uint32_t value){
+   pipeReg[s][reg] = value; 
+}
+
+uint32_t sim_pipe::get_sp_register(sp_register_t reg, stage_t s){
    return pipeReg[s][reg];
 }
 
@@ -253,6 +267,8 @@ int sim_pipe::get_gp_register(unsigned reg){
 }
 
 void sim_pipe::set_gp_register(unsigned reg, int value){
+   this->gprFile[reg].value         = value;
+   this->gprFile[reg].busy          = false;
 }
 
 float sim_pipe::get_IPC(){
@@ -268,34 +284,35 @@ unsigned sim_pipe::get_stalls(){
 }
 
 unsigned sim_pipe::get_clock_cycles(){
-   return 0; //please modify
+   return cycleCount; 
 }
 
 void sim_pipe::write_memory(unsigned address, unsigned value){
+   data_memory[address] = value;
 }
 
 //--------------------------------------PRINT OPERATIONS--------------------------------------------------------------------//
 void sim_pipe::print_memory(unsigned start_address, unsigned end_address){
-   //cout << "data_memory[0x" << hex << setw(8) << setfill('0') << start_address << ":0x" << hex << setw(8) << setfill('0') <<  end_address << "]" << endl;
-   //unsigned i;
-   //for (i=start_address; i<end_address; i++){
-   //   if (i%4 == 0) cout << "0x" << hex << setw(8) << setfill('0') << i << ": "; 
-   //   cout << hex << setw(2) << setfill('0') << int(data_memory[i]) << " ";
-   //   if (i%4 == 3) cout << endl;
-   //} 
+   cout << "data_memory[0x" << hex << setw(8) << setfill('0') << start_address << ":0x" << hex << setw(8) << setfill('0') <<  end_address << "]" << endl;
+   unsigned i;
+   for (i=start_address; i<end_address; i++){
+      if (i%4 == 0) cout << "0x" << hex << setw(8) << setfill('0') << i << ": "; 
+      cout << hex << setw(2) << setfill('0') << int(data_memory[i]) << " ";
+      if (i%4 == 3) cout << endl;
+   } 
 }
 
 void sim_pipe::print_registers(){
-   //cout << "Special purpose registers:" << endl;
-   //unsigned i, s;
-   //for (s=0; s<NUM_STAGES; s++){
-   //   cout << "Stage: " << stage_names[s] << endl;  
-   //   for (i=0; i< NUM_SP_REGISTERS; i++)
-   //      if ((sp_register_t)i != IR && (sp_register_t)i != COND && get_sp_register((sp_register_t)i, (stage_t)s)!=UNDEFINED) cout << reg_names[i] << " = " << dec <<  get_sp_register((sp_register_t)i, (stage_t)s) << hex << " / 0x" << get_sp_register((sp_register_t)i, (stage_t)s) << endl;
-   //}
-   //cout << "General purpose registers:" << endl;
-   //for (i=0; i< NUM_GP_REGISTERS; i++)
-   //   if (get_gp_register(i)!=UNDEFINED) cout << "R" << dec << i << " = " << get_gp_register(i) << hex << " / 0x" << get_gp_register(i) << endl;
+   cout << "Special purpose registers:" << endl;
+   unsigned i, s;
+   for (s=0; s<NUM_STAGES; s++){
+      cout << "Stage: " << stage_names[s] << endl;  
+      for (i=0; i< NUM_SP_REGISTERS; i++)
+         if ((sp_register_t)i != IR && (sp_register_t)i != COND && get_sp_register((sp_register_t)i, (stage_t)s)!=UNDEFINED) cout << reg_names[i] << " = " << dec <<  get_sp_register((sp_register_t)i, (stage_t)s) << hex << " / 0x" << get_sp_register((sp_register_t)i, (stage_t)s) << endl;
+   }
+   cout << "General purpose registers:" << endl;
+   for (i=0; i< NUM_GP_REGISTERS; i++)
+      if (get_gp_register(i)!=UNDEFINED) cout << "R" << dec << i << " = " << get_gp_register(i) << hex << " / 0x" << get_gp_register(i) << endl;
 }
 //------------------------------------------------END OF PRINT OPERATIONS--------------------------------------------------------------//
 
@@ -315,7 +332,7 @@ int sim_pipe::labelToPC( const char* filename, const char* label ){
          line++;
    }while(!feof(temp));
    fclose(temp);
-   //return (line * 4) + baseAddress;
+   //FIXME: return (line * 4) + baseAddress;
    return (line);
 }
 
@@ -358,13 +375,15 @@ int sim_pipe::parse( const char* filename ){
             break;
 
          case ADDI ... ANDI:
-            fscanf(trace, "R%d R%d %x", &a, &b, &c);
+            fscanf(trace, "R%d R%d %d", &a, &b, &c);
             instructP->dst        = a;
             instructP->src1       = b;
             instructP->imm        = c;
             instructP->dstValid   = true;
             instructP->src1Valid  = true;
             break;
+
+            //FIXME: add JUMP instruction
 
          case LW:
             fscanf(trace, "R%d %d(R%d)", &a, &b, &c);

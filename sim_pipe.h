@@ -16,7 +16,7 @@
 #include <algorithm>
 
 #define UNDEFINED 0xFFFFFFFF //constant used to initialize registers
-#define DATA_UNDEF 0xFF
+#define DATA_UNDEF 0
 #define NUM_SP_REGISTERS 9
 #define NUM_GP_REGISTERS 32
 #define NUM_OPCODES 23
@@ -43,6 +43,10 @@ struct instructT{
    bool               dstValid;
    bool               src1Valid;
    bool               src2Valid;
+   bool               is_stall;
+   int                stall_id;
+   int                num_stalls;
+
    instructT(){
       nop();
    }
@@ -56,6 +60,12 @@ struct instructT{
       dstValid   = false;
       src1Valid  = false;
       src2Valid  = false;
+      is_stall   = false;
+   }
+
+   void stall(){
+      nop();
+      is_stall   = true;
    }
 
    void print() {
@@ -68,7 +78,7 @@ class sim_pipe{
 
 public:
    struct gprFileT{
-      unsigned char  value;
+      int            value;
       bool           busy;
    };
 
@@ -135,6 +145,7 @@ public:
            Therefore, the test cases won't check the value of IR using this method. 
 	   You can add an extra method to retrieve the content of IR */
 	unsigned get_sp_register(sp_register_t reg, stage_t stage);
+   void set_sp_register(sp_register_t reg, stage_t s, uint32_t value);
 
 	//returns value of the specified general purpose register
 	int get_gp_register(unsigned reg);
