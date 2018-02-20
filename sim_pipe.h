@@ -44,8 +44,7 @@ struct instructT{
    bool               src1Valid;
    bool               src2Valid;
    bool               is_stall;
-   int                stall_id;
-   int                num_stalls;
+   bool               is_branch;
 
    instructT(){
       nop();
@@ -61,6 +60,7 @@ struct instructT{
       src1Valid  = false;
       src2Valid  = false;
       is_stall   = false;
+      is_branch  = false;
    }
 
    void stall(){
@@ -83,8 +83,10 @@ public:
    };
 
    int               cycleCount;
-   int               instCount;
-   int               stallCount;
+   int               instCount = 0;
+   int               latCount;
+   int               numStalls;
+   bool              latency;
 
    gprFileT          gprFile[NUM_GP_REGISTERS];
    uint32_t          sprFile[NUM_SP_REGISTERS];
@@ -112,11 +114,11 @@ public:
    uint32_t agen(instructT instruct);
    uint32_t alu (uint32_t value1, uint32_t value2, opcode_t opcode);
    void     execute();
-   void     memory();
-   void     writeBack();
+   bool     memory();
+   bool     writeBack();
 
    int parse(const char *filename);
-   int  labelToPC( const char* filename, const char* label );
+   int  labelToPC( const char* filename, const char* label, uint32_t pc_index );
 
    //loads the assembly program in file "filename" in instruction memory at the specified address
    void load_program(const char *filename, unsigned base_address=0x0);
@@ -170,6 +172,8 @@ public:
 
 	// writes an integer value to data memory at the specified address (use little-endian format: https://en.wikipedia.org/wiki/Endianness)
 	void write_memory(unsigned address, unsigned value);
+
+   unsigned read_memory(unsigned address);
 
 	//prints the values of the registers 
 	void print_registers();
