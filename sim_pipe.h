@@ -22,6 +22,12 @@
 #define NUM_OPCODES 23
 #define NUM_STAGES 5
 
+#define ASSERT( condition, statement, ... ) \
+   if( !(condition) ) { \
+      printf( "[ASSERT] In File: %s, Line: %d => " #statement "\n", __FILE__, __LINE__, ##__VA_ARGS__ ); \
+      abort(); \
+   }
+
 using namespace std;
 typedef enum {PC, NPC, IR, A, B, IMM, COND, ALU_OUTPUT, LMD} sp_register_t;
 
@@ -67,10 +73,6 @@ struct instructT{
       nop();
       is_stall   = true;
    }
-
-   void print() {
-      cout << "opcode: " << opcode_str[opcode] << ", dst: " << dst << ", src1: " << src1 << ", src2: " << src2 << ", imm: " << imm << endl;
-   }
 };
 
 
@@ -98,6 +100,7 @@ public:
    instructPT        *instMemory;
    unsigned          dataMemSize;
    unsigned          memLatency;
+   unsigned          memFlag;
    unsigned          baseAddress;
 
 
@@ -109,7 +112,7 @@ public:
 
    instructT fetchInstruction ( uint32_t pc );
 
-   void     fetch();
+   void     fetch(bool cond, uint32_t alu_output);
    bool     decode(); 
    uint32_t agen(instructT instruct);
    uint32_t alu (uint32_t value1, uint32_t value2, opcode_t opcode);
