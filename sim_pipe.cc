@@ -213,6 +213,7 @@ bool sim_pipe::memory() {
       case LW:
          while(memFlag--){
             this->instrArray[WB].stall();
+            numStalls++;
             for(int i = 0; i < NUM_SP_REGISTERS; i++) {
                this->pipeReg[WB][i]           = UNDEFINED;
             }
@@ -224,6 +225,7 @@ bool sim_pipe::memory() {
       case SW:
          while(memFlag--){
             this->instrArray[WB].stall();
+            numStalls++;
             for(int i = 0; i < NUM_SP_REGISTERS; i++) {
                this->pipeReg[WB][i]           = UNDEFINED;
             }
