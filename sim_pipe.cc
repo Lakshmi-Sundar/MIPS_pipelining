@@ -26,7 +26,11 @@ void sim_pipe::fetch(bool cond, uint32_t alu_output) {
    // NPC is current PC
    uint32_t currentFetchPC      = cond ? alu_output : this->pipeReg[IF][PC];
    instructT instruct           = fetchInstruction(currentFetchPC);
-   set_sp_register(PC, IF, currentFetchPC + 4);
+   
+   // The following if condition will not happen in actual RTL
+   if(instruct.opcode != EOP )
+      set_sp_register(PC, IF, currentFetchPC + 4);
+
    this->pipeReg[ID][NPC]       = this->pipeReg[IF][PC];
 
    this->instrArray[ID]         = instruct;
@@ -338,11 +342,11 @@ void sim_pipe::set_gp_register(unsigned reg, int value){
 }
 
 float sim_pipe::get_IPC(){
-   return (instCount-1.0)/cycleCount;
+   return (double) get_instructions_executed() / (double) cycleCount;
 }
 
 unsigned sim_pipe::get_instructions_executed(){
-   return instCount; 
+   return instCount - 1; 
 }
 
 unsigned sim_pipe::get_stalls(){

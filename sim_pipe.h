@@ -85,7 +85,7 @@ public:
    };
 
    int               cycleCount;
-   int               instCount = 0;
+   int               instCount;
    int               latCount;
    int               numStalls;
    bool              latency;
