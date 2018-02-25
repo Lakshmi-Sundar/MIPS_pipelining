@@ -26,7 +26,7 @@ void sim_pipe::fetch(bool cond, uint32_t alu_output) {
    // NPC is current PC
    uint32_t currentFetchPC      = cond ? alu_output : this->pipeReg[IF][PC];
    instructT instruct           = fetchInstruction(currentFetchPC);
-   
+
    // The following if condition will not happen in actual RTL
    if(instruct.opcode != EOP )
       set_sp_register(PC, IF, currentFetchPC + 4);
@@ -56,7 +56,7 @@ bool sim_pipe::decode() {
    this->pipeReg[EX][IMM]               = instruct.imm;
 
    if(instruct.dstValid)
-      this->gprFile[instruct.dst].busy  = true;
+      this->gprFile[instruct.dst].busy++;
 
    if( instruct.is_branch || instrArray[EX].is_branch) { 
       this->instrArray[ID].stall();
@@ -338,7 +338,8 @@ int sim_pipe::get_gp_register(unsigned reg){
 
 void sim_pipe::set_gp_register(unsigned reg, int value){
    this->gprFile[reg].value         = value;
-   this->gprFile[reg].busy          = false;
+   if( this->gprFile[reg].busy != 0 )
+      this->gprFile[reg].busy--;
 }
 
 float sim_pipe::get_IPC(){

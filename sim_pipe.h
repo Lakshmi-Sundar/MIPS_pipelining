@@ -81,7 +81,7 @@ class sim_pipe{
 public:
    struct gprFileT{
       int            value;
-      bool           busy;
+      int            busy;
    };
 
    int               cycleCount;
