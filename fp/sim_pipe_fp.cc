@@ -23,7 +23,6 @@ sim_pipe_fp::sim_pipe_fp(unsigned mem_size, unsigned mem_latency){
 sim_pipe_fp::~sim_pipe_fp(){
 }
 
-//FIXME: add "configurable" EX stage units
 void sim_pipe_fp::init_exec_unit(exe_unit_t exec_unit, unsigned latency, unsigned instances){
    execFp[exec_unit]  = execUnitT(instances, latency);
 }
@@ -43,18 +42,261 @@ instructT sim_pipe_fp::fetchInstruction ( unsigned pc ) {
    return *(instMemory[index]);
 }
 
-void sim_pipe::fetch(bool cond, uint32_t alu_output) {
+void sim_pipe_fp::fetch(bool stall) {
    // NPC is current PC
-   uint32_t currentFetchPC      = cond ? alu_output : this->pipeReg[IF][PC];
-   instructT instruct           = fetchInstruction(currentFetchPC);
+   bool cond                       = get_sp_register(COND, MEM);
+   uint32_t alu_output             = get_sp_register(ALU_OUTPUT, MEM);
+   pipeReg[IF][PC]                 = cond ? alu_output : pipeReg[IF][PC];
+   uint32_t currentFetchPC         = this->pipeReg[IF][PC];
 
    // The following if condition will not happen in actual RTL
-   if(instruct.opcode != EOP )
-      set_sp_register(PC, IF, currentFetchPC + 4);
+   if( !stall ){
+      instructT instruct           = fetchInstruction(currentFetchPC);
+      if(instruct.opcode != EOP )
+         set_sp_register(PC, IF, currentFetchPC + 4);
 
-   this->pipeReg[ID][NPC]       = this->pipeReg[IF][PC];
+      this->pipeReg[ID][NPC]       = this->pipeReg[IF][PC];
 
-   this->instrArray[ID]         = instruct;
+      this->instrArray[ID]         = instruct;
+   }
+}
+
+bool sim_pipe_fp::regBusy(uint32_t regNo, bool isF) {
+   return isF ? fpFile[regNo].busy : gprFile[regNo].busy;
+}
+
+bool sim_pipe_fp::intBranch(){
+   for(int i = 0; i < execFp[INTEGER].numLanes; i++) {
+      if( execFp[INTEGER].lanes[i].instructP->is_branch )
+         return true;
+   }
+   return false;
+}
+
+bool sim_pipe_fp::decode() {
+   //local variable for instruction
+   instructT instruct                   = this->instrArray[ID];
+   this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
+   
+   //-----------------handling the data hazards within decode stage-------------//
+   if(( instruct.src1Valid && regBusy(instruct.src1, instruct.src1F))
+         || (instruct.src2Valid && regBusy(instruct.src2, instruct.src2F))) {
+      this->instrArray[EX].stall();
+      numStalls++;
+      for(int i = 0; i < NUM_SP_REGISTERS; i++) {
+         this->pipeReg[EX][i]           = UNDEFINED;
+      }
+      return true;
+   }
+
+   this->pipeReg[EX][A]                 = (instruct.src1Valid) ? get_int_register(instruct.src1) : UNDEFINED;
+   this->pipeReg[EX][B]                 = (instruct.src2Valid) ? get_int_register(instruct.src2) : UNDEFINED;
+   this->pipeReg[EX][IMM]               = instruct.imm;
+
+   //incrementing busy to handle hazards caused by RAW and WAW-R dependencies
+   if(instruct.dstValid)
+      this->gprFile[instruct.dst].busy++;
+
+   //-----------handling the control hazards within decode stage------------------//
+   if(instruct.is_branch || instrArray[EX].is_branch || intBranch()) { 
+      this->instrArray[ID].stall();
+      numStalls++;
+      for(int i = 0; i < NUM_SP_REGISTERS; i++) {
+         this->pipeReg[ID][i]           = UNDEFINED;
+      }
+      this->instrArray[EX]              = instruct;
+      return true;
+   }
+   else {
+      this->instrArray[EX]              = instruct;
+      return (instruct.opcode == EOP);
+   }
+}
+
+//function to generate address for LW SW instructions
+uint32_t sim_pipe_fp::agen ( instructT instruct) {
+   return (instruct.imm + get_int_register(instruct.src1));
+}
+
+//function to perform ALU operations
+uint32_t sim_pipe_fp::alu (uint32_t value1, uint32_t value2, opcode_t opcode){
+   uint32_t output;
+
+   switch( opcode ){
+      case ADD:
+      case ADDI:
+      case BEQZ ... BGEZ:
+         output      = value1 + value2;
+         break;
+
+      case SUB:
+      case SUBI:
+         output      = value1 - value2;
+         break;
+
+      case XOR:
+      case XORI:
+         output      = value1 ^ value2;
+         break;
+
+      case AND:
+      case ANDI:
+         output      = value1 & value2;
+         break;
+
+      case OR:
+      case ORI:
+         output      = value1 | value2;
+         break;
+
+      case MULT:
+         output      = value1 * value2;
+         break;
+
+      case DIV:
+         output      = value1 / value2;
+         break;
+
+      default: 
+         output      = UNDEFINED;
+         break;
+   }
+   return output;
+}
+
+void sim_pipe_fp::execute() {
+
+   instructT instruct                   = this->instrArray[EX]; 
+
+   for(int i = 0; i < NUM_SP_REGISTERS; i++) {
+      this->pipeReg[MEM][i]     = UNDEFINED;
+   }
+   this->pipeReg[MEM][COND]     = 0;
+   switch(instruct.opcode) {
+      case LW:
+         this->pipeReg[MEM][ALU_OUTPUT] = agen (instruct);
+         break;
+
+      case SW:
+         this->pipeReg[MEM][ALU_OUTPUT] = agen (instruct);
+         break;
+
+      case ADD ... AND:
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(get_int_register(instruct.src1), 
+               get_int_register(instruct.src2), instruct.opcode);
+         break;
+
+      case ADDI ... ANDI:
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(get_int_register(instruct.src1),
+               this->pipeReg[EX][IMM], instruct.opcode);
+         break;
+
+      case BLTZ:
+         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) < 0;
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
+               this->pipeReg[EX][IMM], instruct.opcode);
+         break;
+
+      case BNEZ:
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
+               this->pipeReg[EX][IMM], instruct.opcode);
+
+         this->pipeReg[MEM][COND]       = (get_int_register(instruct.src1) != 0);
+         break;
+
+      case BEQZ:
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
+               this->pipeReg[EX][IMM], instruct.opcode);
+         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) == 0;
+         break;
+
+      case BGTZ:
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
+               this->pipeReg[EX][IMM], instruct.opcode);
+         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) > 0;
+         break;
+
+      case BGEZ:
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
+               this->pipeReg[EX][IMM], instruct.opcode);
+         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) >= 0;
+         break;
+
+      case BLEZ:
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
+               this->pipeReg[EX][IMM], instruct.opcode);
+         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) <= 0;
+         break;
+
+      case JUMP:
+         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
+               this->pipeReg[EX][IMM], instruct.opcode);
+         this->pipeReg[MEM][COND]        = 1;
+         break;
+
+      case NOP:
+      case EOP:
+         break;
+
+      default:
+         ASSERT(false, "Unknown operation encountered");
+         break;
+
+   }
+   this->pipeReg[MEM][B] = this->pipeReg[EX][B];
+   this->instrArray[MEM] = instruct;
+   memFlag               = memLatency;
+}
+
+bool sim_pipe_fp::memory() {
+
+   instructT instruct                     = this->instrArray[MEM]; 
+
+   pipeReg[WB][LMD]                       = UNDEFINED;
+   switch(instruct.opcode) {
+      case LW:
+         //To introduce latency into the memory stage
+         while(memFlag--){
+            this->instrArray[WB].stall();
+            numStalls++;
+            for(int i = 0; i < NUM_SP_REGISTERS; i++) {
+               this->pipeReg[WB][i]           = UNDEFINED;
+            }
+            return true;
+         }
+         pipeReg[WB][LMD]                 = read_memory( pipeReg[MEM][ALU_OUTPUT] );
+         break;
+
+      case SW:
+         //To introduce latency into the memory stage
+         while(memFlag--){
+            this->instrArray[WB].stall();
+            numStalls++;
+            for(int i = 0; i < NUM_SP_REGISTERS; i++) {
+               this->pipeReg[WB][i]           = UNDEFINED;
+            }
+            return true;
+         }
+         write_memory(this->pipeReg[MEM][ALU_OUTPUT], get_int_register(instruct.src2));
+         break;
+
+      default: break;
+   }
+   this->instrArray[WB]                    = instruct;
+   pipeReg[WB][ALU_OUTPUT]                 = pipeReg[MEM][ALU_OUTPUT];
+   return false;
+}
+
+bool sim_pipe_fp::writeBack() {
+   instructT instruct                = this->instrArray[WB]; 
+   if (instruct.opcode == EOP){
+     return true;
+   }
+   //Updates value of GPR according to destination
+   if(instruct.dstValid) {
+      set_int_register(instruct.dst, (instruct.opcode == LW) ? pipeReg[WB][LMD] : pipeReg[WB][ALU_OUTPUT]);
+   }
+   return false;
 }
 
 //---------------------------------------------RUN SIMULATION--------------------------------------------//
@@ -91,6 +333,11 @@ void sim_pipe_fp::reset(){
       this->gprFile[i].value = UNDEFINED;
    }
 
+   //initializing FP registers to UNDEFINED
+   for(int i = 0; i < NUM_FP_REGISTERS; i++) {
+      this->fpFile[i].value = UNDEFINED;
+   }
+
    //initializing pipeline registers to UNDEFINED
    for(int i = 0; i < NUM_STAGES; i++) {
       for(int j = 0; j < NUM_SP_REGISTERS; j++) {
@@ -102,35 +349,6 @@ void sim_pipe_fp::reset(){
 
 //-----------------------------------------------END OF RESET BLOCK----------------------------------------//
 
-unsigned sim_pipe_fp::get_sp_register(sp_register_t reg, stage_t s){
-	return 0; //please modify
-}
-
-int sim_pipe_fp::get_int_register(unsigned reg){
-	return 0; //please modify
-}
-
-void sim_pipe_fp::set_int_register(unsigned reg, int value){
-}
-
-float sim_pipe_fp::get_fp_register(unsigned reg){
-	return 0.0; //please modify
-}
-
-void sim_pipe_fp::set_fp_register(unsigned reg, float value){
-}
-
-float sim_pipe_fp::get_IPC(){
-	return 0; //please modify
-}
-
-unsigned sim_pipe_fp::get_instructions_executed(){
-	return 0; //please modify
-}
-
-unsigned sim_pipe_fp::get_stalls(){
-	return 0; //please modify
-}
 
 //-------------------------------------------------PRINT OPERATION BEGINS-------------------------------------------------------------------------//
 void sim_pipe_fp::print_memory(unsigned start_address, unsigned end_address){
@@ -141,14 +359,6 @@ void sim_pipe_fp::print_memory(unsigned start_address, unsigned end_address){
 		cout << hex << setw(2) << setfill('0') << int(data_memory[i]) << " ";
 		if (i%4 == 3) cout << endl;
 	} 
-}
-
-void sim_pipe_fp::write_memory(unsigned address, unsigned value){
-}
-
-unsigned sim_pipe_fp::get_clock_cycles(){
-   //FIXME
-   return 0;
 }
 
 void sim_pipe_fp::print_registers(){
@@ -166,8 +376,6 @@ void sim_pipe_fp::print_registers(){
 		if (get_fp_register(i)!=UNDEFINED) cout << "F" << dec << i << " = " << get_fp_register(i) << hex << " / 0x" << get_fp_register(i) << endl;
 }
 //-------------------------------------------------PRINT OPERATION ENDS-------------------------------------------------------------------------//
-
-//FIXME: Add floating point operations
 
 int sim_pipe_fp::labelToPC( const char* filename, const char* label, uint32_t pc_index ){
    FILE* temp  = fopen(filename, "r");
@@ -324,3 +532,60 @@ inline float sim_pipe_fp::unsigned2float(unsigned value){
         return result;
 }
 
+//------------------------------------------- SETTER/GETTER UTILS BEGIN ---------------------------------------//
+void sim_pipe_fp::set_sp_register(sp_register_t reg, stage_t s, uint32_t value){
+   pipeReg[s][reg] = value; 
+}
+
+unsigned sim_pipe_fp::get_sp_register(sp_register_t reg, stage_t s){
+	return 0; //please modify
+}
+
+int sim_pipe_fp::get_int_register(unsigned reg){
+	return 0; //please modify
+}
+
+void sim_pipe_fp::set_int_register(unsigned reg, int value){
+}
+
+float sim_pipe_fp::get_fp_register(unsigned reg){
+	return 0.0; //please modify
+}
+
+void sim_pipe_fp::set_fp_register(unsigned reg, float value){
+}
+
+float sim_pipe_fp::get_IPC(){
+	return 0; //please modify
+}
+
+unsigned sim_pipe_fp::get_instructions_executed(){
+	return 0; //please modify
+}
+
+unsigned sim_pipe_fp::get_stalls(){
+	return 0; //please modify
+}
+
+unsigned sim_pipe_fp::get_clock_cycles(){
+   return cycleCount; 
+}
+
+//-------------------------------------------- SETTER/GETTER UTILS END ----------------------------------------//
+
+unsigned sim_pipe_fp::read_memory(unsigned address){
+   unsigned value = 0;
+   value |= data_memory[address + 0];
+   value |= data_memory[address + 1] << 8;  
+   value |= data_memory[address + 2] << 16;
+   value |= data_memory[address + 3] << 24;
+   return value;
+}
+
+void sim_pipe_fp::write_memory(unsigned address, unsigned value){
+   ASSERT( address % 3 == 0, "Unaligned memory access found at address %x", address ); 
+   data_memory[address + -2] = value;
+   data_memory[address + -2] = value >> 8;
+   data_memory[address + -2] = value >> 16;
+   data_memory[address + -2] = value >> 24;
+}

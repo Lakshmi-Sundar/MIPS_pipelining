@@ -103,6 +103,17 @@ class sim_pipe_fp{
          bool           busy;
       };
 
+      struct execLaneT{
+         instructPT     instructP;
+         int            ttl;
+
+         execLaneT(){
+            ttl            = 0;
+            instructP      = NULL;
+         }
+
+      };
+
       struct execUnitT{
          execLaneT      *lanes;
          int            numLanes;
@@ -123,17 +134,7 @@ class sim_pipe_fp{
          }
 
       };
-
-      struct execLaneT{
-         instructPT     instructP;
-         int            ttl;
-
-         execLaneT(){
-            ttl            = 0;
-            instructP      = NULL;
-         }
-
-      };
+      
 
       int               cycleCount;
       int               instCount;
@@ -177,8 +178,10 @@ class sim_pipe_fp{
       // - instances: number of execution units of this type to be added
       void init_exec_unit(exe_unit_t exec_unit, unsigned latency, unsigned instances=1);
       instructT fetchInstruction ( uint32_t pc );
+      bool regBusy(uint32_t regNo, bool isF);
+      bool intBranch();
 
-      void     fetch(bool cond, uint32_t alu_output);
+      void     fetch(bool stall);
       bool     decode(); 
       uint32_t agen(instructT instruct);
       uint32_t alu (uint32_t value1, uint32_t value2, opcode_t opcode);
@@ -216,6 +219,7 @@ class sim_pipe_fp{
          Therefore, the test cases won't check the value of IR using this method. 
          You can add an extra method to retrieve the content of IR */
       unsigned get_sp_register(sp_register_t reg, stage_t stage);
+      void set_sp_register(sp_register_t reg, stage_t s, uint32_t value);
 
       //returns value of the specified integer general purpose register
       int get_int_register(unsigned reg);
