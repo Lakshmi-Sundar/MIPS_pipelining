@@ -73,46 +73,102 @@ bool sim_pipe_fp::intBranch(){
    return false;
 }
 
+exe_unit_t sim_pipe_fp::opcodeToExUnit(opcode_t opcode){
+   switch( opcode ){
+      case ADD ... SWS:
+         return INTEGER;
+         break;
+
+      case ADDS:
+      case SUBS:
+         return ADDER;
+         break;
+
+      case MULTS:
+         return MULTIPLIER;
+         break;
+
+      case DIVS:
+         return DIVIDER;
+         break;
+      default: 
+         ASSERT (false, "Opcode not supported");
+         return INTEGER;
+         break;
+   }
+}
+
+int sim_pipe_fp::exLatency(opcode_t opcode) {
+   return execFp[opcodeToExUnit(opcode)].latency;
+}
+
 bool sim_pipe_fp::decode() {
-   //local variable for instruction
+   bool stallEx                         = false;
+
    instructT instruct                   = this->instrArray[ID];
    this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
-   
-   //-----------------handling the data hazards within decode stage-------------//
-   if(( instruct.src1Valid && regBusy(instruct.src1, instruct.src1F))
-         || (instruct.src2Valid && regBusy(instruct.src2, instruct.src2F))) {
+
+   //------------------------------ RAW BEGIN --------------------------------------
+   if( (instruct.src1Valid && regBusy(instruct.src1, instruct.src1F)) ||
+         (instruct.src2Valid && regBusy(instruct.src2, instruct.src2F)) ) {
+      stallEx                 = true;
+   }
+   //------------------------------- RAW ENDS ---------------------------------------
+   //----------------------- WAW & EX CONTENTION BEGINS -----------------------------
+   for(int i = 0; i < EXEC_UNIT_TOTAL && !stallEx; i++) {
+      for(int j = 0; j < execFp[i].numLanes; j++) {
+         execLaneT lane       = execFp[i].lanes[j];
+         int latency          = exLatency(instruct.opcode);
+         if(latency == lane.ttl) {
+            stallEx           = true;
+            break;
+         }
+         else if( (instruct.dstValid && lane.instructP->dstValid) && // Destinations should be valid
+               (instruct.dst == lane.instructP->dst) && // Reg numbers should match
+               (instruct.dstF == lane.instructP->dstF) && // Both should either be R or F
+               (latency <= lane.ttl) ){ // Latency must be LTE TTL
+            stallEx     = true;
+            break;
+         }
+      }
+   }
+   //------------------------ WAW & EX CONTENTION ENDS ------------------------------
+   //-------------------------- BRANCH CONTROL BEGINS -------------------------------
+   bool stallBranch                     = instruct.is_branch || instrArray[EX].is_branch || intBranch();
+   if( stallBranch ) { 
+      this->instrArray[ID].stall();
+      numStalls++;
+      for(int i = 0; i < NUM_SP_REGISTERS; i++) {
+         this->pipeReg[ID][i]           = UNDEFINED;
+      }
+   }
+   //--------------------------- BRANCH CONTROL ENDS --------------------------------
+
+   if( stallEx ){
+      // Stalling
       this->instrArray[EX].stall();
       numStalls++;
       for(int i = 0; i < NUM_SP_REGISTERS; i++) {
          this->pipeReg[EX][i]           = UNDEFINED;
       }
       return true;
-   }
+   } 
+   else{
+      // Issue to EX
+      //incrementing busy to handle hazards caused by RAW and WAW-R dependencies
+      if(instruct.dstValid)
+         this->gprFile[instruct.dst].busy++;
 
-   this->pipeReg[EX][A]                 = (instruct.src1Valid) ? get_int_register(instruct.src1) : UNDEFINED;
-   this->pipeReg[EX][B]                 = (instruct.src2Valid) ? get_int_register(instruct.src2) : UNDEFINED;
-   this->pipeReg[EX][IMM]               = instruct.imm;
+      this->pipeReg[EX][A]                 = (instruct.src1Valid) ? get_int_register(instruct.src1) : UNDEFINED;
+      this->pipeReg[EX][B]                 = (instruct.src2Valid) ? get_int_register(instruct.src2) : UNDEFINED;
+      this->pipeReg[EX][IMM]               = instruct.imm;
 
-   //incrementing busy to handle hazards caused by RAW and WAW-R dependencies
-   if(instruct.dstValid)
-      this->gprFile[instruct.dst].busy++;
-
-   //-----------handling the control hazards within decode stage------------------//
-   if(instruct.is_branch || instrArray[EX].is_branch || intBranch()) { 
-      this->instrArray[ID].stall();
-      numStalls++;
-      for(int i = 0; i < NUM_SP_REGISTERS; i++) {
-         this->pipeReg[ID][i]           = UNDEFINED;
-      }
-      this->instrArray[EX]              = instruct;
-      return true;
-   }
-   else {
-      this->instrArray[EX]              = instruct;
-      return (instruct.opcode == EOP);
+      this->instrArray[EX]                 = instruct;
+      return (instruct.opcode == EOP || stallBranch);
    }
 }
 
+   
 //function to generate address for LW SW instructions
 uint32_t sim_pipe_fp::agen ( instructT instruct) {
    return (instruct.imm + get_int_register(instruct.src1));

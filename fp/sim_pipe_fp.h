@@ -126,6 +126,8 @@ class sim_pipe_fp{
          }
 
          execUnitT(int numLanes, int latency){
+            ASSERT( latency > 0, "Impractical latency found (=%d)", latency );
+            ASSERT( numLanes > 0, "Unsupported numLanes (=%d)", numLanes );
             this->numLanes = numLanes;
             this->latency  = latency;
             if( lanes != NULL )
@@ -180,6 +182,8 @@ class sim_pipe_fp{
       instructT fetchInstruction ( uint32_t pc );
       bool regBusy(uint32_t regNo, bool isF);
       bool intBranch();
+      exe_unit_t opcodeToExUnit(opcode_t opcode);
+      int exLatency(opcode_t opcode);
 
       void     fetch(bool stall);
       bool     decode(); 
