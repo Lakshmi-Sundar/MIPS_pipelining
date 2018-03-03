@@ -4,6 +4,7 @@
 static const char *reg_names[NUM_SP_REGISTERS] = {"PC", "NPC", "IR", "A", "B", "IMM", "COND", "ALU_OUTPUT", "LMD"};
 static const char *stage_names[NUM_STAGES] = {"IF", "ID", "EX", "MEM", "WB"};
 
+//Mapping strings into its opcode
 map <string, opcode_t> opcode_2str = { {"LW", LW}, {"SW", SW}, {"ADD", ADD}, {"SUB", SUB}, {"XOR", XOR}, {"OR", OR}, {"AND", AND}, {"MULT", MULT}, {"DIV", DIV}, {"ADDI", ADDI}, {"SUBI", SUBI}, {"XORI", XORI}, {"ORI", ORI}, {"ANDI", ANDI}, {"BEQZ", BEQZ}, {"BNEZ", BNEZ}, {"BLTZ", BLTZ}, {"BGTZ", BGTZ}, {"BLEZ", BLEZ}, {"BGEZ", BGEZ}, {"JUMP", JUMP}, {"EOP", EOP}, {"NOP", NOP} };
 
 sim_pipe::sim_pipe(unsigned mem_size, unsigned mem_latency){
@@ -22,25 +23,31 @@ instructT sim_pipe::fetchInstruction ( unsigned pc ) {
    return *(instMemory[index]);
 }
 
-void sim_pipe::fetch(bool cond, uint32_t alu_output) {
+void sim_pipe::fetch(bool stall) {
    // NPC is current PC
-   uint32_t currentFetchPC      = cond ? alu_output : this->pipeReg[IF][PC];
-   instructT instruct           = fetchInstruction(currentFetchPC);
+   bool cond                       = get_sp_register(COND, MEM);
+   uint32_t alu_output             = get_sp_register(ALU_OUTPUT, MEM);
+   pipeReg[IF][PC]                 = cond ? alu_output : pipeReg[IF][PC];
+   uint32_t currentFetchPC         = this->pipeReg[IF][PC];
 
    // The following if condition will not happen in actual RTL
-   if(instruct.opcode != EOP )
-      set_sp_register(PC, IF, currentFetchPC + 4);
+   if( !stall ){
+      instructT instruct           = fetchInstruction(currentFetchPC);
+      if(instruct.opcode != EOP )
+         set_sp_register(PC, IF, currentFetchPC + 4);
 
-   this->pipeReg[ID][NPC]       = this->pipeReg[IF][PC];
+      this->pipeReg[ID][NPC]       = this->pipeReg[IF][PC];
 
-   this->instrArray[ID]         = instruct;
+      this->instrArray[ID]         = instruct;
+   }
 }
 
 bool sim_pipe::decode() {
    //local variable for instruction
    instructT instruct                   = this->instrArray[ID];
    this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
-
+   
+   //-----------------handling the data hazards within decode stage-------------//
    if(( instruct.src1Valid && this->gprFile[instruct.src1].busy )
          || (instruct.src2Valid && this->gprFile[instruct.src2].busy)) {
       this->instrArray[EX].stall();
@@ -55,10 +62,12 @@ bool sim_pipe::decode() {
    this->pipeReg[EX][B]                 = (instruct.src2Valid) ? get_gp_register(instruct.src2) : UNDEFINED;
    this->pipeReg[EX][IMM]               = instruct.imm;
 
+   //incrementing busy to handle hazards caused by RAW and WAW-R dependencies
    if(instruct.dstValid)
       this->gprFile[instruct.dst].busy++;
 
-   if( instruct.is_branch || instrArray[EX].is_branch) { 
+   //-----------handling the control hazards within decode stage------------------//
+   if(instruct.is_branch || instrArray[EX].is_branch) { 
       this->instrArray[ID].stall();
       numStalls++;
       for(int i = 0; i < NUM_SP_REGISTERS; i++) {
@@ -215,6 +224,7 @@ bool sim_pipe::memory() {
    pipeReg[WB][LMD]                       = UNDEFINED;
    switch(instruct.opcode) {
       case LW:
+         //To introduce latency into the memory stage
          while(memFlag--){
             this->instrArray[WB].stall();
             numStalls++;
@@ -227,6 +237,7 @@ bool sim_pipe::memory() {
          break;
 
       case SW:
+         //To introduce latency into the memory stage
          while(memFlag--){
             this->instrArray[WB].stall();
             numStalls++;
@@ -238,14 +249,6 @@ bool sim_pipe::memory() {
          write_memory(this->pipeReg[MEM][ALU_OUTPUT], get_gp_register(instruct.src2));
          break;
 
-      //case NOP:
-      //   if (instruct.is_stall) {
-      //      for(int i = 0; i < NUM_SP_REGISTERS; i++) {
-      //         this->pipeReg[WB][i]           = UNDEFINED;
-      //      }
-      //   }
-      //   break;
-
       default: break;
    }
    this->instrArray[WB]                    = instruct;
@@ -253,12 +256,12 @@ bool sim_pipe::memory() {
    return false;
 }
 
-//Updates value of GPR according to destination
 bool sim_pipe::writeBack() {
    instructT instruct                = this->instrArray[WB]; 
    if (instruct.opcode == EOP){
      return true;
    }
+   //Updates value of GPR according to destination
    if(instruct.dstValid) {
       set_gp_register(instruct.dst, (instruct.opcode == LW) ? pipeReg[WB][LMD] : pipeReg[WB][ALU_OUTPUT]);
    }
@@ -280,14 +283,11 @@ void sim_pipe::load_program(const char *filename, unsigned base_address){
 void sim_pipe::run(unsigned cycles){
    bool rtc = (cycles == 0);
    while(cycles-- || rtc) {
-      // Pre-sampling COND for FF behavior
-      bool cond           = get_sp_register(COND, MEM);
-      uint32_t alu_output = get_sp_register(ALU_OUTPUT, MEM);
       if(writeBack()) return;
       if( !memory() ) {
          execute();
-         if ( !decode() )
-            fetch(cond, alu_output);
+         bool stall          = decode();
+         fetch(stall);
       }
       cycleCount++;
    }
@@ -338,6 +338,8 @@ int sim_pipe::get_gp_register(unsigned reg){
 
 void sim_pipe::set_gp_register(unsigned reg, int value){
    this->gprFile[reg].value         = value;
+   //If busy counter is incremented (meaning there is a RAW or WAW-R, it is decremented at WB
+   //thus removing the dependency
    if( this->gprFile[reg].busy != 0 )
       this->gprFile[reg].busy--;
 }
@@ -404,7 +406,7 @@ int sim_pipe::labelToPC( const char* filename, const char* label, uint32_t pc_in
    FILE* temp  = fopen(filename, "r");
    int line    = 0;
    do{
-      char str[25];
+      char str[4096];
       fscanf(temp, "%s", str);
       if(str[strlen(str)-1] == ':'){
          str[strlen(str)-1] = '\0';
@@ -421,9 +423,9 @@ int sim_pipe::labelToPC( const char* filename, const char* label, uint32_t pc_in
 
 int sim_pipe::parse( const char* filename ){
    FILE* trace;
-   char buff[1024], label[495];
+   char buff[4096], label[1024];
    int a, b, c, lineNo = 0;
-   char imm[32];
+   char imm[100];
 
    trace  = fopen(filename, "r");
 
@@ -513,4 +515,3 @@ int sim_pipe::parse( const char* filename ){
 
    return lineNo;
 }
-

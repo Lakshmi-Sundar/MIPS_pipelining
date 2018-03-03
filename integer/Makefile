@@ -19,7 +19,7 @@ all:	$(TESTCASES)
 
 #rule for creating the object files for all the testcases in the "testcases" folder
 testcase: 
-	$(MAKE) -C testcases
+	mkdir -p bin && $(MAKE) -C testcases
 
 # rules for making testcases
 testcase1: .cc.o testcase 

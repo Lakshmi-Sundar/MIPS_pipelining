@@ -25,6 +25,7 @@ sim_pipe_fp::~sim_pipe_fp(){
 
 //FIXME: add "configurable" EX stage units
 void sim_pipe_fp::init_exec_unit(exe_unit_t exec_unit, unsigned latency, unsigned instances){
+   execFp[exec_unit]  = execUnitT(instances, latency);
 }
 
 //------------------------LOADING PROGRAM---------------------------------------------------------------//
@@ -42,8 +43,32 @@ instructT sim_pipe_fp::fetchInstruction ( unsigned pc ) {
    return *(instMemory[index]);
 }
 
+void sim_pipe::fetch(bool cond, uint32_t alu_output) {
+   // NPC is current PC
+   uint32_t currentFetchPC      = cond ? alu_output : this->pipeReg[IF][PC];
+   instructT instruct           = fetchInstruction(currentFetchPC);
+
+   // The following if condition will not happen in actual RTL
+   if(instruct.opcode != EOP )
+      set_sp_register(PC, IF, currentFetchPC + 4);
+
+   this->pipeReg[ID][NPC]       = this->pipeReg[IF][PC];
+
+   this->instrArray[ID]         = instruct;
+}
+
 //---------------------------------------------RUN SIMULATION--------------------------------------------//
 void sim_pipe_fp::run(unsigned cycles){
+   bool rtc = (cycles == 0);
+   while(cycles-- || rtc) {
+      if(writeBack()) return;
+      if( !memory() ) {
+         execute();
+         bool stall          = decode();
+         fetch(stall);
+      }
+      cycleCount++;
+   }
 }
 //---------------------------------------------END OF RUN------------------------------------------------//
 

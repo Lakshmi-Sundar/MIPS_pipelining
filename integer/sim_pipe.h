@@ -109,10 +109,9 @@ public:
 
    //de-allocates the simulator
    ~sim_pipe();
-
    instructT fetchInstruction ( uint32_t pc );
 
-   void     fetch(bool cond, uint32_t alu_output);
+   void     fetch(bool stall);
    bool     decode(); 
    uint32_t agen(instructT instruct);
    uint32_t alu (uint32_t value1, uint32_t value2, opcode_t opcode);

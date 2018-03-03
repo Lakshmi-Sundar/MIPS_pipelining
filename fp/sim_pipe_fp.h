@@ -38,7 +38,7 @@ const string opcode_str[] = {"ADD", "SUB", "XOR", "OR", "AND", "MULT", "DIV", "B
 
 typedef enum {IF, ID, EX, MEM, WB} stage_t;
 
-typedef enum {INTEGER, ADDER, MULTIPLIER, DIVIDER} exe_unit_t;
+typedef enum {INTEGER, ADDER, MULTIPLIER, DIVIDER, EXEC_UNIT_TOTAL} exe_unit_t;
 
 typedef struct instructT* instructPT;
 
@@ -103,6 +103,38 @@ class sim_pipe_fp{
          bool           busy;
       };
 
+      struct execUnitT{
+         execLaneT      *lanes;
+         int            numLanes;
+         int            latency;
+
+         execUnitT(){
+            lanes          = NULL;
+            numLanes       = 0;
+            latency        = 0;
+         }
+
+         execUnitT(int numLanes, int latency){
+            this->numLanes = numLanes;
+            this->latency  = latency;
+            if( lanes != NULL )
+               delete lanes;
+            lanes          = new execLaneT[numLanes];
+         }
+
+      };
+
+      struct execLaneT{
+         instructPT     instructP;
+         int            ttl;
+
+         execLaneT(){
+            ttl            = 0;
+            instructP      = NULL;
+         }
+
+      };
+
       int               cycleCount;
       int               instCount;
       int               latCount;
@@ -111,15 +143,16 @@ class sim_pipe_fp{
 
       gprFileT          gprFile[NUM_GP_REGISTERS];
       fpFileT           fpFile[NUM_FP_REGISTERS];
+      execUnitT         execFp[EXEC_UNIT_TOTAL];
       uint32_t          pipeReg[NUM_STAGES][NUM_SP_REGISTERS];
 
       instructT         instrArray[NUM_STAGES];
 
       //data memory - should be initialize to all 0xFF
-      unsigned char *data_memory;
+      unsigned char     *data_memory;
 
       //memory size in bytes
-      unsigned data_memory_size;
+      unsigned          data_memory_size;
       instructPT        *instMemory;
       unsigned          dataMemSize;
       unsigned          memLatency;
