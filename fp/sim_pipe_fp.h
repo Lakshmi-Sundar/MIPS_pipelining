@@ -62,6 +62,7 @@ struct instructT{
       nop();
    }
 
+   //DO NOT DELETE HAHAHAHAAHAHAHAHAHAH
    void print(){
       cout << "Opcode: " << opcode_str[opcode] << ", dst: " << dst << ", src1: " << src1 << ", src2: " << src2 << ", imm: " << imm << ", dstValid: " << dstValid << ", src1Valid: " << src1Valid << ", src2Valid: " << src2Valid << ", dstF: " << dstF << ", src1F: " << src1F << ", src2F: " << src2F << ", is_stall: " << is_stall << ", is_branch: " << is_branch << endl;
    }
@@ -104,12 +105,11 @@ class sim_pipe_fp{
       };
 
       struct execLaneT{
-         instructPT     instructP;
+         instructT      instruct;
          int            ttl;
 
          execLaneT(){
             ttl            = 0;
-            instructP      = NULL;
          }
 
       };
@@ -130,8 +130,8 @@ class sim_pipe_fp{
             ASSERT( numLanes > 0, "Unsupported numLanes (=%d)", numLanes );
             this->numLanes = numLanes;
             this->latency  = latency;
-            if( lanes != NULL )
-               delete lanes;
+            //if( lanes != NULL )
+              // delete lanes;
             lanes          = new execLaneT[numLanes];
          }
 
@@ -188,7 +188,8 @@ class sim_pipe_fp{
       void     fetch(bool stall);
       bool     decode(); 
       uint32_t agen(instructT instruct);
-      uint32_t alu (uint32_t value1, uint32_t value2, opcode_t opcode);
+      unsigned alu (unsigned _value1, unsigned _value2, bool value1F, bool value2F, opcode_t opcode);
+      unsigned aluF (unsigned _value1, unsigned _value2, bool value1F, bool value2F, opcode_t opcode);
       void     execute();
       bool     memory();
       bool     writeBack();
@@ -224,6 +225,7 @@ class sim_pipe_fp{
          You can add an extra method to retrieve the content of IR */
       unsigned get_sp_register(sp_register_t reg, stage_t stage);
       void set_sp_register(sp_register_t reg, stage_t s, uint32_t value);
+      unsigned regRead(unsigned reg, bool isF);
 
       //returns value of the specified integer general purpose register
       int get_int_register(unsigned reg);
@@ -256,6 +258,7 @@ class sim_pipe_fp{
       void write_memory(unsigned address, unsigned value);
 
       unsigned read_memory(unsigned address);
+      instructT execInst(int& count);
 
       //prints the values of the registers 
       void print_registers();

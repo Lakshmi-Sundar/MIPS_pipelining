@@ -49,9 +49,11 @@ void sim_pipe_fp::fetch(bool stall) {
    pipeReg[IF][PC]                 = cond ? alu_output : pipeReg[IF][PC];
    uint32_t currentFetchPC         = this->pipeReg[IF][PC];
 
+
    // The following if condition will not happen in actual RTL
    if( !stall ){
       instructT instruct           = fetchInstruction(currentFetchPC);
+      cout << "IF: opcode" << opcode_str[instruct.opcode] << endl;
       if(instruct.opcode != EOP )
          set_sp_register(PC, IF, currentFetchPC + 4);
 
@@ -67,7 +69,7 @@ bool sim_pipe_fp::regBusy(uint32_t regNo, bool isF) {
 
 bool sim_pipe_fp::intBranch(){
    for(int i = 0; i < execFp[INTEGER].numLanes; i++) {
-      if( execFp[INTEGER].lanes[i].instructP->is_branch )
+      if( execFp[INTEGER].lanes[i].instruct.is_branch )
          return true;
    }
    return false;
@@ -108,6 +110,8 @@ bool sim_pipe_fp::decode() {
    instructT instruct                   = this->instrArray[ID];
    this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
 
+   cout << "ID: opcode" << opcode_str[instruct.opcode] << endl;
+
    //------------------------------ RAW BEGIN --------------------------------------
    if( (instruct.src1Valid && regBusy(instruct.src1, instruct.src1F)) ||
          (instruct.src2Valid && regBusy(instruct.src2, instruct.src2F)) ) {
@@ -123,10 +127,10 @@ bool sim_pipe_fp::decode() {
             stallEx           = true;
             break;
          }
-         else if( (instruct.dstValid && lane.instructP->dstValid) && // Destinations should be valid
-               (instruct.dst == lane.instructP->dst) && // Reg numbers should match
-               (instruct.dstF == lane.instructP->dstF) && // Both should either be R or F
-               (latency <= lane.ttl) ){ // Latency must be LTE TTL
+         else if( (instruct.dstValid && lane.instruct.dstValid) && // Destinations should be valid
+               (instruct.dst == lane.instruct.dst) && // Reg numbers should match
+               (instruct.dstF == lane.instruct.dstF) && // Both should either be R or F
+               (latency <= lane.ttl) ){ // Latency must be LTE ttl
             stallEx     = true;
             break;
          }
@@ -143,6 +147,18 @@ bool sim_pipe_fp::decode() {
       }
    }
    //--------------------------- BRANCH CONTROL ENDS --------------------------------
+   //--------------------------- CHECKING FOR LANES BEGIN ---------------------------
+   if(!stallEx) {
+      bool isFreeLane    = false;
+      for(int j = 0; j < execFp[opcodeToExUnit(instruct.opcode)].numLanes; j++){
+         if(execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl == 0) {
+            isFreeLane   = true;
+            break;
+         }
+      }
+      stallEx            = !isFreeLane;
+   }
+   //--------------------------- CHECKING FOR LANES ENDS ----------------------------
 
    if( stallEx ){
       // Stalling
@@ -156,11 +172,13 @@ bool sim_pipe_fp::decode() {
    else{
       // Issue to EX
       //incrementing busy to handle hazards caused by RAW and WAW-R dependencies
-      if(instruct.dstValid)
-         this->gprFile[instruct.dst].busy++;
+      if(instruct.dstValid){
+         gprFile[instruct.dst].busy += !(instruct.dstF); 
+         fpFile[instruct.dst].busy  +=  (instruct.dstF); 
+      }
 
-      this->pipeReg[EX][A]                 = (instruct.src1Valid) ? get_int_register(instruct.src1) : UNDEFINED;
-      this->pipeReg[EX][B]                 = (instruct.src2Valid) ? get_int_register(instruct.src2) : UNDEFINED;
+      this->pipeReg[EX][A]                 = (instruct.src1Valid) ? regRead(instruct.src1, instruct.src1F) : UNDEFINED;
+      this->pipeReg[EX][B]                 = (instruct.src2Valid) ? regRead(instruct.src2, instruct.src2F) : UNDEFINED;
       this->pipeReg[EX][IMM]               = instruct.imm;
 
       this->instrArray[EX]                 = instruct;
@@ -168,15 +186,68 @@ bool sim_pipe_fp::decode() {
    }
 }
 
+
    
 //function to generate address for LW SW instructions
 uint32_t sim_pipe_fp::agen ( instructT instruct) {
-   return (instruct.imm + get_int_register(instruct.src1));
+   return (instruct.imm + regRead(instruct.src1, instruct.src1F));
+}
+
+unsigned sim_pipe_fp::aluF (unsigned _value1, unsigned _value2, bool value1F, bool value2F, opcode_t opcode){
+   float output;
+   float value1 = value1F ? unsigned2float(_value1) : _value1;
+   float value2 = value2F ? unsigned2float(_value2) : _value2; 
+
+   switch( opcode ){
+      case ADD:
+      case ADDI:
+      case BEQZ ... BGEZ:
+         output      = value1 + value2;
+         break;
+
+      case SUB:
+      case SUBI:
+         output      = value1 - value2;
+         break;
+
+      case XOR:
+      case XORI:
+         output      = (unsigned)value1 ^ (unsigned)value2;
+         break;
+
+      case AND:
+      case ANDI:
+         output      = (unsigned)value1 & (unsigned)value2;
+         break;
+
+      case OR:
+      case ORI:
+         output      = (unsigned)value1 | (unsigned)value2;
+         break;
+
+      case MULT:
+         output      = value1 * value2;
+         break;
+
+      case DIV:
+         output      = value1 / value2;
+         break;
+
+      default: 
+         output      = UNDEFINED;
+         break;
+   }
+   return float2unsigned(output);
 }
 
 //function to perform ALU operations
-uint32_t sim_pipe_fp::alu (uint32_t value1, uint32_t value2, opcode_t opcode){
+unsigned sim_pipe_fp::alu (unsigned _value1, unsigned _value2, bool value1F, bool value2F, opcode_t opcode){
+
+   if( value1F || value2F ) return aluF(_value1, _value2, value1F, value2F, opcode);
+
    uint32_t output;
+   uint32_t value1 = !value1F ? unsigned2float(_value1) : _value1;
+   uint32_t value2 = !value2F ? unsigned2float(_value2) : _value2; 
 
    switch( opcode ){
       case ADD:
@@ -220,97 +291,127 @@ uint32_t sim_pipe_fp::alu (uint32_t value1, uint32_t value2, opcode_t opcode){
    return output;
 }
 
+
+instructT sim_pipe_fp::execInst(int& count){
+   count               = 0; 
+   instructT instruct;
+   for(int i = 0; i < EXEC_UNIT_TOTAL; i++){
+      for(int j = 0; j < execFp[i].numLanes; j++){
+   //      printf("i: %d j: %d ttl: %d %s\n", i, j, execFp[i].lanes[j].ttl,  opcode_str[execFp[i].lanes[j].instruct.opcode].c_str());
+         if( execFp[i].lanes[j].ttl != 0 ) {
+            execFp[i].lanes[j].ttl--;
+            if( execFp[i].lanes[j].ttl == 0 ) {
+               count++;
+               instruct = execFp[i].lanes[j].instruct;
+            }
+         }
+      }
+   }
+   ASSERT ( count <= 1, "STRUCTURAL HAZARD AT MEM DETECTED" );
+   return instruct;
+}
+
 void sim_pipe_fp::execute() {
 
-   instructT instruct                   = this->instrArray[EX]; 
+   instructT instruct                   = instrArray[EX]; 
+
+   cout << "EXbefore: opcode" << opcode_str[instruct.opcode] << endl;
 
    for(int i = 0; i < NUM_SP_REGISTERS; i++) {
       this->pipeReg[MEM][i]     = UNDEFINED;
    }
    this->pipeReg[MEM][COND]     = 0;
-   switch(instruct.opcode) {
-      case LW:
-         this->pipeReg[MEM][ALU_OUTPUT] = agen (instruct);
+
+   for(int j = 0; j < execFp[opcodeToExUnit(instruct.opcode)].numLanes; j++){
+      if(execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl == 0) {
+         execFp[opcodeToExUnit(instruct.opcode)].lanes[j].instruct = instruct;
+         execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl      = exLatency(instruct.opcode);
          break;
-
-      case SW:
-         this->pipeReg[MEM][ALU_OUTPUT] = agen (instruct);
-         break;
-
-      case ADD ... AND:
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(get_int_register(instruct.src1), 
-               get_int_register(instruct.src2), instruct.opcode);
-         break;
-
-      case ADDI ... ANDI:
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(get_int_register(instruct.src1),
-               this->pipeReg[EX][IMM], instruct.opcode);
-         break;
-
-      case BLTZ:
-         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) < 0;
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
-               this->pipeReg[EX][IMM], instruct.opcode);
-         break;
-
-      case BNEZ:
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
-               this->pipeReg[EX][IMM], instruct.opcode);
-
-         this->pipeReg[MEM][COND]       = (get_int_register(instruct.src1) != 0);
-         break;
-
-      case BEQZ:
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
-               this->pipeReg[EX][IMM], instruct.opcode);
-         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) == 0;
-         break;
-
-      case BGTZ:
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
-               this->pipeReg[EX][IMM], instruct.opcode);
-         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) > 0;
-         break;
-
-      case BGEZ:
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
-               this->pipeReg[EX][IMM], instruct.opcode);
-         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) >= 0;
-         break;
-
-      case BLEZ:
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
-               this->pipeReg[EX][IMM], instruct.opcode);
-         this->pipeReg[MEM][COND]       = get_int_register(instruct.src1) <= 0;
-         break;
-
-      case JUMP:
-         this->pipeReg[MEM][ALU_OUTPUT] = alu(this->pipeReg[EX][NPC],
-               this->pipeReg[EX][IMM], instruct.opcode);
-         this->pipeReg[MEM][COND]        = 1;
-         break;
-
-      case NOP:
-      case EOP:
-         break;
-
-      default:
-         ASSERT(false, "Unknown operation encountered");
-         break;
-
+      }
    }
-   this->pipeReg[MEM][B] = this->pipeReg[EX][B];
-   this->instrArray[MEM] = instruct;
-   memFlag               = memLatency;
+
+   int count;
+   instruct = execInst(count);
+   cout << "EXafter: opcode" << opcode_str[instruct.opcode] << endl;
+   if(count != 0) {
+
+      uint32_t src1 = instruct.src1;
+      uint32_t src2 = instruct.src2;
+      bool src1F    = instruct.src1F;
+      bool src2F    = instruct.src2F;
+      switch(instruct.opcode) {
+         case LW ... SWS:
+            pipeReg[MEM][ALU_OUTPUT] = agen (instruct);
+            break;
+
+         case ADD ... DIV:
+         case ADDS ... DIVS:
+            pipeReg[MEM][ALU_OUTPUT] = alu(regRead(src1, src1F), regRead(src2, src2F), src1F, src2F, instruct.opcode);
+            break;
+
+         case ADDI ... ANDI:
+            pipeReg[MEM][ALU_OUTPUT] = alu(regRead(src1, src1F), pipeReg[EX][IMM], src1F, false, instruct.opcode);
+            break;
+
+         case BLTZ:
+            pipeReg[MEM][COND]       = regRead(src1, src1F) < 0;
+            pipeReg[MEM][ALU_OUTPUT] = alu(pipeReg[EX][NPC], pipeReg[EX][IMM], false, false, instruct.opcode);
+            break;
+
+         case BNEZ:
+            pipeReg[MEM][ALU_OUTPUT] = alu(pipeReg[EX][NPC], pipeReg[EX][IMM], false, false, instruct.opcode);
+            pipeReg[MEM][COND]       = regRead(src1, src1F) != 0;
+            break;
+
+         case BEQZ:
+            pipeReg[MEM][ALU_OUTPUT] = alu(pipeReg[EX][NPC], pipeReg[EX][IMM], false, false, instruct.opcode);
+            pipeReg[MEM][COND]       = regRead(src1, src1F) == 0;
+            break;
+
+         case BGTZ:
+            pipeReg[MEM][ALU_OUTPUT] = alu(pipeReg[EX][NPC], pipeReg[EX][IMM], false, false, instruct.opcode);
+            pipeReg[MEM][COND]       = regRead(src1, src1F) > 0;
+            break;
+
+         case BGEZ:
+            pipeReg[MEM][ALU_OUTPUT] = alu(pipeReg[EX][NPC], pipeReg[EX][IMM], false, false, instruct.opcode);
+            pipeReg[MEM][COND]       = regRead(src1, src1F) >= 0;
+            break;
+
+         case BLEZ:
+            pipeReg[MEM][ALU_OUTPUT] = alu(pipeReg[EX][NPC], pipeReg[EX][IMM], false, false, instruct.opcode);
+            pipeReg[MEM][COND]       = regRead(src1, src1F) <= 0;
+            break;
+
+         case JUMP:
+            pipeReg[MEM][ALU_OUTPUT] = alu(pipeReg[EX][NPC], pipeReg[EX][IMM], false, false, instruct.opcode);
+            pipeReg[MEM][COND]       = 1;
+            break;
+
+         case NOP:
+         case EOP:
+            break;
+
+         default:
+            ASSERT(false, "Unknown operation encountered");
+            break;
+
+      }
+      this->pipeReg[MEM][B] = this->pipeReg[EX][B];
+      this->instrArray[MEM] = instruct;
+      memFlag               = memLatency;
+   }
 }
 
 bool sim_pipe_fp::memory() {
 
    instructT instruct                     = this->instrArray[MEM]; 
+   cout << "MEM: opcode" << opcode_str[instruct.opcode] << endl;
 
    pipeReg[WB][LMD]                       = UNDEFINED;
    switch(instruct.opcode) {
       case LW:
+      case LWS:
          //To introduce latency into the memory stage
          while(memFlag--){
             this->instrArray[WB].stall();
@@ -324,6 +425,7 @@ bool sim_pipe_fp::memory() {
          break;
 
       case SW:
+      case SWS:
          //To introduce latency into the memory stage
          while(memFlag--){
             this->instrArray[WB].stall();
@@ -333,7 +435,7 @@ bool sim_pipe_fp::memory() {
             }
             return true;
          }
-         write_memory(this->pipeReg[MEM][ALU_OUTPUT], get_int_register(instruct.src2));
+         write_memory(this->pipeReg[MEM][ALU_OUTPUT], regRead(instruct.src2, instruct.src2F));
          break;
 
       default: break;
@@ -345,12 +447,16 @@ bool sim_pipe_fp::memory() {
 
 bool sim_pipe_fp::writeBack() {
    instructT instruct                = this->instrArray[WB]; 
+   cout << "WB: opcode" << opcode_str[instruct.opcode] << endl;
    if (instruct.opcode == EOP){
-     return true;
+      return true;
    }
    //Updates value of GPR according to destination
    if(instruct.dstValid) {
-      set_int_register(instruct.dst, (instruct.opcode == LW) ? pipeReg[WB][LMD] : pipeReg[WB][ALU_OUTPUT]);
+      if(instruct.dstF)
+         set_fp_register(instruct.dst, (instruct.opcode == LW || instruct.opcode == LWS) ? pipeReg[WB][LMD] : pipeReg[WB][ALU_OUTPUT]);
+      else
+         set_int_register(instruct.dst, (instruct.opcode == LW || instruct.opcode == LWS) ? pipeReg[WB][LMD] : pipeReg[WB][ALU_OUTPUT]);
    }
    return false;
 }
@@ -373,7 +479,7 @@ void sim_pipe_fp::run(unsigned cycles){
 
 //---------------------------------------------RESET BLOCK-----------------------------------------------//
 void sim_pipe_fp::reset(){
-//initializing data_memory to UNDEFINED
+   //initializing data_memory to UNDEFINED
    this->data_memory       = new unsigned char[dataMemSize];
    for(unsigned i = 0; i < this->dataMemSize; i++) {
       this->data_memory[i] = UNDEFINED; 
@@ -589,38 +695,46 @@ inline float sim_pipe_fp::unsigned2float(unsigned value){
 }
 
 //------------------------------------------- SETTER/GETTER UTILS BEGIN ---------------------------------------//
+
+unsigned sim_pipe_fp::regRead(unsigned reg, bool isF){
+   return isF ? float2unsigned(fpFile[reg].value) : gprFile[reg].value;
+}
+
+
 void sim_pipe_fp::set_sp_register(sp_register_t reg, stage_t s, uint32_t value){
    pipeReg[s][reg] = value; 
 }
 
 unsigned sim_pipe_fp::get_sp_register(sp_register_t reg, stage_t s){
-	return 0; //please modify
+	return pipeReg[s][reg]; 
 }
 
 int sim_pipe_fp::get_int_register(unsigned reg){
-	return 0; //please modify
+	return gprFile[reg].value; 
 }
 
 void sim_pipe_fp::set_int_register(unsigned reg, int value){
+   gprFile[reg].value = value;
 }
 
 float sim_pipe_fp::get_fp_register(unsigned reg){
-	return 0.0; //please modify
+	return fpFile[reg].value; 
 }
 
 void sim_pipe_fp::set_fp_register(unsigned reg, float value){
+   fpFile[reg].value = value;
 }
 
 float sim_pipe_fp::get_IPC(){
-	return 0; //please modify
+	return 0; //please modify 
 }
 
 unsigned sim_pipe_fp::get_instructions_executed(){
-	return 0; //please modify
+	return instCount; 
 }
 
 unsigned sim_pipe_fp::get_stalls(){
-	return 0; //please modify
+	return numStalls; 
 }
 
 unsigned sim_pipe_fp::get_clock_cycles(){
@@ -639,9 +753,9 @@ unsigned sim_pipe_fp::read_memory(unsigned address){
 }
 
 void sim_pipe_fp::write_memory(unsigned address, unsigned value){
-   ASSERT( address % 3 == 0, "Unaligned memory access found at address %x", address ); 
-   data_memory[address + -2] = value;
-   data_memory[address + -2] = value >> 8;
-   data_memory[address + -2] = value >> 16;
-   data_memory[address + -2] = value >> 24;
+   ASSERT( address % 4 == 0, "Unaligned memory access found at address %x", address ); 
+   data_memory[address + 0] = value;
+   data_memory[address + 1] = value >> 8;
+   data_memory[address + 2] = value >> 16;
+   data_memory[address + 3] = value >> 24;
 }

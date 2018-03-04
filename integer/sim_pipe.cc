@@ -151,6 +151,7 @@ void sim_pipe::execute() {
          break;
 
       case ADD ... AND:
+      case MULT ... DIV:
          this->pipeReg[MEM][ALU_OUTPUT] = alu(get_gp_register(instruct.src1), 
                get_gp_register(instruct.src2), instruct.opcode);
          break;
