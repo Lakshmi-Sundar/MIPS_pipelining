@@ -54,7 +54,7 @@ void sim_pipe_fp::fetch(bool stall) {
    // The following if condition will not happen in actual RTL
    if( !stall ){
       instructT instruct           = fetchInstruction(currentFetchPC);
-      cout << "IF: opcode " << opcode_str[instruct.opcode] << endl;
+      //cout << "IF: opcode " << opcode_str[instruct.opcode] << endl;
       if(instruct.opcode != EOP )
          set_sp_register(PC, IF, currentFetchPC + 4);
 
@@ -70,8 +70,9 @@ bool sim_pipe_fp::regBusy(uint32_t regNo, bool isF) {
 
 bool sim_pipe_fp::intBranch(){
    for(int i = 0; i < execFp[INTEGER].numLanes; i++) {
-      if( execFp[INTEGER].lanes[i].instruct.is_branch && execFp[INTEGER].lanes[i].ttl != 0 )
+      if( execFp[INTEGER].lanes[i].instruct.is_branch ) {
          return true;
+      }
    }
    return false;
 }
@@ -115,7 +116,7 @@ bool sim_pipe_fp::decode() {
    int latency                          = instruct.is_stall ? 0 : exLatency(instruct.opcode);
    this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
 
-   cout << "ID: opcode " << opcode_str[instruct.opcode] << endl;
+   //cout << "ID: opcode " << opcode_str[instruct.opcode] << endl;
 
    //------------------------------ RAW BEGIN --------------------------------------
    if( (instruct.src1Valid && regBusy(instruct.src1, instruct.src1F)) ||
@@ -151,14 +152,12 @@ bool sim_pipe_fp::decode() {
    if(!stallEx) {
       bool isFreeLane    = false;
       for(int j = 0; j < execFp[opcodeToExUnit(instruct.opcode)].numLanes; j++){
-         cout << "ttl: " << execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl << endl;
          if(execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl == 0) {
             isFreeLane   = true;
             break;
          }
       }
       stallEx            = !isFreeLane;
-      cout << "stall in decode-lane: " << stallEx << endl;
    }
    //--------------------------- CHECKING FOR LANES ENDS ----------------------------
    //-------------------------- BRANCH CONTROL BEGINS -------------------------------
@@ -171,8 +170,6 @@ bool sim_pipe_fp::decode() {
       }
    }
    //--------------------------- BRANCH CONTROL ENDS --------------------------------
-
-   cout << "stall in decode-end: " << stallEx << endl;
 
    if( stallEx ){
       // Stalling
@@ -214,13 +211,14 @@ unsigned sim_pipe_fp::aluF (unsigned _value1, unsigned _value2, bool value1F, bo
 
    switch( opcode ){
       case ADD:
-      case ADDI:
-      case BEQZ ... BGEZ:
+      case BEQZ ... ADDI:
+      case JUMP ... ADDS:
          output      = value1 + value2;
          break;
 
       case SUB:
       case SUBI:
+      case SUBS:
          output      = value1 - value2;
          break;
 
@@ -240,10 +238,12 @@ unsigned sim_pipe_fp::aluF (unsigned _value1, unsigned _value2, bool value1F, bo
          break;
 
       case MULT:
+      case MULTS:   
          output      = value1 * value2;
          break;
 
       case DIV:
+      case DIVS:
          output      = value1 / value2;
          break;
 
@@ -257,53 +257,47 @@ unsigned sim_pipe_fp::aluF (unsigned _value1, unsigned _value2, bool value1F, bo
 //function to perform ALU operations
 unsigned sim_pipe_fp::alu (unsigned _value1, unsigned _value2, bool value1F, bool value2F, opcode_t opcode){
 
-
-   cout << "v1 @ alu: r " << _value1 << endl;
-   cout << "v2 @ alu: r " << _value2 << endl;
-
    if( value1F || value2F ) return aluF(_value1, _value2, value1F, value2F, opcode);
 
    unsigned output;
    unsigned value1   = value1F ? float2unsigned(_value1) : _value1;
    unsigned value2   = value2F ? float2unsigned(_value2) : _value2; 
 
-   cout << "v1 @ alu: s " << value1 << endl;
-   cout << "v2 @ alu: s " << value2 << endl;
-
    switch( opcode ){
       case ADD:
-      case ADDI:
-      case BEQZ ... BGEZ:
+      case BEQZ ... ADDI:
+      case JUMP ... ADDS:
          output      = value1 + value2;
-         cout << "v1 @ alu: " << value1 << endl;
-         cout << "v2 @ alu: " << value2 << endl;
          break;
 
       case SUB:
       case SUBI:
+      case SUBS:
          output      = value1 - value2;
          break;
 
       case XOR:
       case XORI:
-         output      = value1 ^ value2;
+         output      = (unsigned)value1 ^ (unsigned)value2;
          break;
 
       case AND:
       case ANDI:
-         output      = value1 & value2;
+         output      = (unsigned)value1 & (unsigned)value2;
          break;
 
       case OR:
       case ORI:
-         output      = value1 | value2;
+         output      = (unsigned)value1 | (unsigned)value2;
          break;
 
       case MULT:
+      case MULTS:   
          output      = value1 * value2;
          break;
 
       case DIV:
+      case DIVS:
          output      = value1 / value2;
          break;
 
@@ -311,7 +305,6 @@ unsigned sim_pipe_fp::alu (unsigned _value1, unsigned _value2, bool value1F, boo
          output      = UNDEFINED;
          break;
    }
-   cout << "output @ alu: " << output << endl;
    return output;
 }
 
@@ -319,19 +312,18 @@ unsigned sim_pipe_fp::alu (unsigned _value1, unsigned _value2, bool value1F, boo
 instructT sim_pipe_fp::execInst(int& count, uint32_t& b, uint32_t& npc){
    instructT instruct;
    count = 0;
-   //cout << "count A: " << count << endl;
    for(int i = 0; i < EXEC_UNIT_TOTAL; i++){
       for(int j = 0; j < execFp[i].numLanes; j++){
-         //printf("i: %d j: %d ttl: %d %s\n", i, j, execFp[i].lanes[j].ttl,  opcode_str[execFp[i].lanes[j].instruct.opcode].c_str());
          if( execFp[i].lanes[j].ttl != 0 ) {
             execFp[i].lanes[j].ttl--;
             if( execFp[i].lanes[j].ttl == 0 ) {
                count++;
-               //cout << "count B: " << count << endl;
                instruct = execFp[i].lanes[j].instruct;
                b        = execFp[i].lanes[j].b;
                npc      = execFp[i].lanes[j].exNpc;
             }
+         } else{
+            execFp[i].lanes[j].instruct.stall();
          }
       }
    }
@@ -343,7 +335,7 @@ void sim_pipe_fp::execute() {
 
    instructT instruct                   = instrArray[EX]; 
 
-   cout << "EX: opcode " << opcode_str[instruct.opcode] << endl;
+   //cout << "EX: opcode " << opcode_str[instruct.opcode] << endl;
 
    for(int i = 0; i < NUM_SP_REGISTERS; i++) {
       this->pipeReg[MEM][i]     = UNDEFINED;
@@ -356,8 +348,6 @@ void sim_pipe_fp::execute() {
          execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl      = instruct.is_stall ? 0 : exLatency(instruct.opcode);
          execFp[opcodeToExUnit(instruct.opcode)].lanes[j].b        = pipeReg[EX][B];
          execFp[opcodeToExUnit(instruct.opcode)].lanes[j].exNpc    = pipeReg[EX][NPC];
-         cout << "<<ttl: " << execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl << endl;
-         cout << "stall: " << instruct.is_stall << endl;
          break;
       }
    }
@@ -366,9 +356,6 @@ void sim_pipe_fp::execute() {
    uint32_t b;
    uint32_t npc;
    instruct = execInst(count, b, npc);
-
-   cout << "EX: op " << opcode_str[instruct.opcode] << "count: " << count << endl;
-   instruct.print();
 
    if(count != 0) {
       uint32_t src1 = instruct.src1;
@@ -388,10 +375,7 @@ void sim_pipe_fp::execute() {
             break;
 
          case ADDI ... ANDI:
-            cout << "regRead: " << regRead(src1, src1F) << endl;
-            cout << "imm " << pipeReg[EX][IMM] << endl;
             pipeReg[MEM][ALU_OUTPUT] = alu(regRead(src1, src1F), instruct.imm, src1F, false, instruct.opcode);
-            cout << "alu @ ex " << pipeReg[MEM][ALU_OUTPUT] << endl;
             break;
 
          case BLTZ:
@@ -445,7 +429,7 @@ void sim_pipe_fp::execute() {
 bool sim_pipe_fp::memory() {
 
    instructT instruct                     = this->instrArray[MEM]; 
-   cout << "MEM: opcode " << opcode_str[instruct.opcode] << endl;
+   //cout << "MEM: opcode " << opcode_str[instruct.opcode] << endl;
 
    pipeReg[WB][LMD]                       = UNDEFINED;
    switch(instruct.opcode) {
@@ -461,7 +445,6 @@ bool sim_pipe_fp::memory() {
             return true;
          }
          pipeReg[WB][LMD]                 = read_memory( pipeReg[MEM][ALU_OUTPUT] );
-         cout << "MEM output: " << unsigned2float(pipeReg[WB][LMD])<< endl;
          break;
 
       case SW:
@@ -487,16 +470,16 @@ bool sim_pipe_fp::memory() {
 
 bool sim_pipe_fp::writeBack() {
    instructT instruct                = this->instrArray[WB]; 
-   cout << "WB: opcode " << opcode_str[instruct.opcode] << endl;
+   //cout << "WB: opcode " << opcode_str[instruct.opcode] << endl;
    if (instruct.opcode == EOP){
       return true;
    }
    //Updates value of GPR according to destination
    if(instruct.dstValid) {
-      cout << "WB output: " << unsigned2float((instruct.opcode == LW || instruct.opcode == LWS) ? pipeReg[WB][LMD] : pipeReg[WB][ALU_OUTPUT]) << endl;
       unsigned result = (instruct.opcode == LW || instruct.opcode == LWS) ? pipeReg[WB][LMD] : pipeReg[WB][ALU_OUTPUT];
-      if(instruct.dstF)
+      if(instruct.dstF) {
          set_fp_register(instruct.dst, unsigned2float(result));
+      }
       else
          set_int_register(instruct.dst, result);
    }
@@ -577,7 +560,7 @@ void sim_pipe_fp::print_registers(){
 	for (i=0; i< NUM_GP_REGISTERS; i++)
 		if (get_int_register(i)!=UNDEFINED) cout << "R" << dec << i << " = " << get_int_register(i) << hex << " / 0x" << get_int_register(i) << endl;
 	for (i=0; i< NUM_GP_REGISTERS; i++)
-		if (get_fp_register(i)!=UNDEFINED) cout << "F" << dec << i << " = " << get_fp_register(i) << hex << " / 0x" << get_fp_register(i) << endl;
+		if (get_fp_register(i)!=UNDEFINED) cout << "F" << dec << i << " = " << get_fp_register(i) << hex << " / 0x" << float2unsigned(get_fp_register(i)) << endl;
 }
 //-------------------------------------------------PRINT OPERATION ENDS-------------------------------------------------------------------------//
 
