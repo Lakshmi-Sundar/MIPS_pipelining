@@ -132,7 +132,7 @@ class sim_pipe_fp{
             ASSERT( numLanes > 0, "Unsupported number of lanes (=%d)", numLanes );
             this->numLanes += numLanes;
             this->latency   = latency;
-            lanes           = (execLaneT*)realloc(lanes, numLanes * sizeof(execLaneT));
+            lanes           = (execLaneT*)realloc(lanes, this->numLanes * sizeof(execLaneT));
          }
       };
       

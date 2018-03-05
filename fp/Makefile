@@ -6,7 +6,7 @@ CFLAGS = $(OPT) $(WARN)
 # List corresponding compiled object files here (.o files)
 SIM_OBJ = sim_pipe_fp.o
 
-TESTCASES = fp_testcase testcase1 testcase2 testcase3 testcase4 testcase5 testcase6
+TESTCASES = fp_testcase testcase_random testcase_cf testcase1 testcase2 testcase3 testcase4 testcase5 testcase6
  
 #################################
 
@@ -24,6 +24,12 @@ testcase:
 # rules for making testcases
 fp_testcase: .cc.o testcase 
 	$(CC) -o bin/fp_testcase $(CFLAGS) $(SIM_OBJ) fp_testcase/testcase_fp1.o
+
+testcase_cf: .cc.o testcase 
+	$(CC) -o bin/testcase_cf $(CFLAGS) $(SIM_OBJ) fp_testcase/testcase_cf.o
+
+testcase_random: .cc.o testcase 
+	$(CC) -o bin/testcase_random $(CFLAGS) $(SIM_OBJ) fp_testcase/testcase_random.o
 
 testcase1: .cc.o testcase 
 	$(CC) -o bin/testcase1 $(CFLAGS) $(SIM_OBJ) fp_testcase/testcase1.o

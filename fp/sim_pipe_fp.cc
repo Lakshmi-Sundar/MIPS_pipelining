@@ -79,31 +79,35 @@ bool sim_pipe_fp::intBranch(){
 }
 
 exe_unit_t sim_pipe_fp::opcodeToExUnit(opcode_t opcode){
+   exe_unit_t unit;
    switch( opcode ){
       case ADD ... AND:
       case BEQZ ... SWS:
-         return INTEGER;
+         unit = INTEGER;
          break;
 
       case ADDS:
       case SUBS:
-         return ADDER;
+         unit = ADDER;
          break;
 
       case MULTS:
       case MULT:
-         return MULTIPLIER;
+         unit = MULTIPLIER;
          break;
 
       case DIVS:
       case DIV:
-         return DIVIDER;
+         unit = DIVIDER;
          break;
+
       default: 
          ASSERT (false, "Opcode not supported");
-         return INTEGER;
+         unit = INTEGER;
          break;
    }
+   ASSERT( execFp[unit].numLanes > 0, "No lanes found for opcode: %s", opcode_str[opcode].c_str());
+   return unit;
 }
 
 int sim_pipe_fp::exLatency(opcode_t opcode) {
@@ -783,6 +787,8 @@ unsigned sim_pipe_fp::get_clock_cycles(){
 
 unsigned sim_pipe_fp::read_memory(unsigned address){
    unsigned value = 0;
+   ASSERT( address % 4 == 0, "Unaligned memory access found at address %x", address ); 
+   ASSERT ( (address >= 0) && (address < dataMemSize), "Out of bounds memory accessed: Seg Fault!!!!" );
    value |= data_memory[address + 0];
    value |= data_memory[address + 1] << 8;  
    value |= data_memory[address + 2] << 16;
@@ -792,6 +798,7 @@ unsigned sim_pipe_fp::read_memory(unsigned address){
 
 void sim_pipe_fp::write_memory(unsigned address, unsigned value){
    ASSERT( address % 4 == 0, "Unaligned memory access found at address %x", address ); 
+   ASSERT ( (address >= 0) && (address < dataMemSize), "Out of bounds memory accessed: Seg Fault!!!!" );
    data_memory[address + 0] = value;
    data_memory[address + 1] = value >> 8;
    data_memory[address + 2] = value >> 16;
