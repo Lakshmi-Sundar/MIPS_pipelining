@@ -127,16 +127,13 @@ class sim_pipe_fp{
             latency        = 0;
          }
 
-         execUnitT(int numLanes, int latency){
+         void init(int numLanes, int latency){
             ASSERT( latency > 0, "Impractical latency found (=%d)", latency );
             ASSERT( numLanes > 0, "Unsupported number of lanes (=%d)", numLanes );
-            this->numLanes = numLanes;
-            this->latency  = latency;
-            //if( lanes != NULL )
-              // delete lanes;
-            lanes          = new execLaneT[numLanes];
+            this->numLanes += numLanes;
+            this->latency   = latency;
+            lanes           = (execLaneT*)realloc(lanes, numLanes * sizeof(execLaneT));
          }
-
       };
       
 

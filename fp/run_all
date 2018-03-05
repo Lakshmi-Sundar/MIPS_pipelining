@@ -6,6 +6,7 @@
 ./bin/testcase4 > test_4
 ./bin/testcase5 > test_5
 ./bin/testcase6 > test_6
+./bin/fp_testcase > test_fp
 
 gvim -d test_1 fp_testcase/testcase1.out
 gvim -d test_2 fp_testcase/testcase2.out
@@ -13,3 +14,4 @@ gvim -d test_3 fp_testcase/testcase3.out
 gvim -d test_4 fp_testcase/testcase4.out
 gvim -d test_5 fp_testcase/testcase5.out
 gvim -d test_6 fp_testcase/testcase6.out
+gvim -d test_fp fp_testcase/testcase_fp1.out

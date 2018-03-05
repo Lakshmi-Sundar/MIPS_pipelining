@@ -24,7 +24,7 @@ sim_pipe_fp::~sim_pipe_fp(){
 }
 
 void sim_pipe_fp::init_exec_unit(exe_unit_t exec_unit, unsigned latency, unsigned instances){
-   execFp[exec_unit]  = execUnitT(instances, latency+1);
+   execFp[exec_unit].init(instances, latency+1);
 }
 
 //------------------------LOADING PROGRAM---------------------------------------------------------------//
