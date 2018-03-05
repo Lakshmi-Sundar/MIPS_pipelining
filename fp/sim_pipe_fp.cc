@@ -37,10 +37,12 @@ void sim_pipe_fp::load_program(const char *filename, unsigned base_address){
 
 //fetching instruction from instruction memory
 instructT sim_pipe_fp::fetchInstruction ( unsigned pc ) {
-   int      index = (pc - this->baseAddress)/4;
+   int      index     = (pc - this->baseAddress)/4;
    ASSERT((index >= 0) && (index < instMemSize), "out of bound access of instruction memory %d", index);
-   instCount++;
-   return *(instMemory[index]);
+   instructT instruct = *(instMemory[index]);
+   if(instruct.opcode != EOP)
+      instCount++;
+   return instruct;
 }
 
 void sim_pipe_fp::fetch(bool stall) {
@@ -54,7 +56,6 @@ void sim_pipe_fp::fetch(bool stall) {
    // The following if condition will not happen in actual RTL
    if( !stall ){
       instructT instruct           = fetchInstruction(currentFetchPC);
-      //cout << "IF: opcode " << opcode_str[instruct.opcode] << endl;
       if(instruct.opcode != EOP )
          set_sp_register(PC, IF, currentFetchPC + 4);
 
@@ -116,7 +117,6 @@ bool sim_pipe_fp::decode() {
    int latency                          = instruct.is_stall ? 0 : exLatency(instruct.opcode);
    this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
 
-   //cout << "ID: opcode " << opcode_str[instruct.opcode] << endl;
 
    //------------------------------ RAW BEGIN --------------------------------------
    if( (instruct.src1Valid && regBusy(instruct.src1, instruct.src1F)) ||
@@ -164,7 +164,7 @@ bool sim_pipe_fp::decode() {
    bool stallBranch                     = instruct.is_branch || instrArray[EX].is_branch || intBranch();
    if( stallBranch && !stallEx ) { 
       this->instrArray[ID].stall();
-      numStalls++;
+      if(!(instruct.opcode == EOP)) numStalls++;
       for(int i = 0; i < NUM_SP_REGISTERS; i++) {
          this->pipeReg[ID][i]           = UNDEFINED;
       }
@@ -174,7 +174,7 @@ bool sim_pipe_fp::decode() {
    if( stallEx ){
       // Stalling
       this->instrArray[EX].stall();
-      numStalls++;
+      if(!(instruct.opcode == EOP)) numStalls++;
       for(int i = 0; i < NUM_SP_REGISTERS; i++) {
          this->pipeReg[EX][i]           = UNDEFINED;
       }
@@ -331,11 +331,19 @@ instructT sim_pipe_fp::execInst(int& count, uint32_t& b, uint32_t& npc){
    return instruct;
 }
 
+int sim_pipe_fp::getMaxTtl() {
+   int ttl = 0;
+   for(int i = 0; i < EXEC_UNIT_TOTAL; i++){
+      for(int j = 0; j < execFp[i].numLanes; j++){
+         ttl = max(ttl, execFp[i].lanes[j].ttl);
+      }
+   }
+   return ttl;
+}
+
 void sim_pipe_fp::execute() {
 
    instructT instruct                   = instrArray[EX]; 
-
-   //cout << "EX: opcode " << opcode_str[instruct.opcode] << endl;
 
    for(int i = 0; i < NUM_SP_REGISTERS; i++) {
       this->pipeReg[MEM][i]     = UNDEFINED;
@@ -345,7 +353,11 @@ void sim_pipe_fp::execute() {
    for(int j = 0; j < execFp[opcodeToExUnit(instruct.opcode)].numLanes; j++){
       if(execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl == 0) {
          execFp[opcodeToExUnit(instruct.opcode)].lanes[j].instruct = instruct;
-         execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl      = instruct.is_stall ? 0 : exLatency(instruct.opcode);
+         if(instruct.opcode == EOP) {
+            execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl   = getMaxTtl() + 1;
+         }
+         else 
+            execFp[opcodeToExUnit(instruct.opcode)].lanes[j].ttl   = instruct.is_stall ? 0 : exLatency(instruct.opcode);
          execFp[opcodeToExUnit(instruct.opcode)].lanes[j].b        = pipeReg[EX][B];
          execFp[opcodeToExUnit(instruct.opcode)].lanes[j].exNpc    = pipeReg[EX][NPC];
          break;
@@ -429,7 +441,6 @@ void sim_pipe_fp::execute() {
 bool sim_pipe_fp::memory() {
 
    instructT instruct                     = this->instrArray[MEM]; 
-   //cout << "MEM: opcode " << opcode_str[instruct.opcode] << endl;
 
    pipeReg[WB][LMD]                       = UNDEFINED;
    switch(instruct.opcode) {
@@ -470,7 +481,6 @@ bool sim_pipe_fp::memory() {
 
 bool sim_pipe_fp::writeBack() {
    instructT instruct                = this->instrArray[WB]; 
-   //cout << "WB: opcode " << opcode_str[instruct.opcode] << endl;
    if (instruct.opcode == EOP){
       return true;
    }
@@ -684,7 +694,6 @@ int sim_pipe_fp::parse( const char* filename ){
             ASSERT(false, "Unknown operation encountered");
             break;
       }
-      instructP->print();
       lineNo++;
    }while(!feof(trace));
 
@@ -755,7 +764,7 @@ void sim_pipe_fp::set_fp_register(unsigned reg, float value){
 }
 
 float sim_pipe_fp::get_IPC(){
-	return 0; //please modify 
+   return (double) get_instructions_executed() / (double) cycleCount;
 }
 
 unsigned sim_pipe_fp::get_instructions_executed(){

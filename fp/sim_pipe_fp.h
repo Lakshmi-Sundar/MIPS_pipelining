@@ -266,6 +266,7 @@ class sim_pipe_fp{
       //prints the values of the registers 
       void print_registers();
       
+      int getMaxTtl();
       uint32_t parseReg( FILE* trace, bool& is_float );
       inline unsigned float2unsigned(float value);
       inline float unsigned2float(unsigned value);
