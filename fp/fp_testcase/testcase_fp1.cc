@@ -31,12 +31,12 @@ int main(int argc, char **argv){
 	sim_pipe_fp *mips = new sim_pipe_fp(1024*1024, 9);
 
 	mips->init_exec_unit(INTEGER, 1, 1);
-	//mips->init_exec_unit(ADDER, 4, 1);
-	//mips->init_exec_unit(MULTIPLIER, 7, 1);
-	//mips->init_exec_unit(DIVIDER, 25, 1);
+	mips->init_exec_unit(ADDER, 4, 1);
+	mips->init_exec_unit(MULTIPLIER, 7, 1);
+	mips->init_exec_unit(DIVIDER, 25, 1);
 
 	//loads program in instruction memory at address 0x10000000
-	mips->load_program("asm/code.asm", 0x10000000);
+	mips->load_program("asm/codefp.asm", 0x10000000);
 
 	//initialize data memory and prints its content (for the specified address ranges)
 	for (i = 0xA000, j=1; i<0xA020; i+=4, j+=1) mips->write_memory(i,float2unsigned((float)j/2));

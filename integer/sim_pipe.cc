@@ -33,6 +33,7 @@ void sim_pipe::fetch(bool stall) {
    // The following if condition will not happen in actual RTL
    if( !stall ){
       instructT instruct           = fetchInstruction(currentFetchPC);
+      cout << "IF: opcode" << opcode_str[instruct.opcode] << endl;
       if(instruct.opcode != EOP )
          set_sp_register(PC, IF, currentFetchPC + 4);
 
@@ -46,6 +47,7 @@ bool sim_pipe::decode() {
    //local variable for instruction
    instructT instruct                   = this->instrArray[ID];
    this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
+   cout << "ID: opcode" << opcode_str[instruct.opcode] << endl;
    
    //-----------------handling the data hazards within decode stage-------------//
    if(( instruct.src1Valid && this->gprFile[instruct.src1].busy )
@@ -136,6 +138,7 @@ uint32_t sim_pipe::alu (uint32_t value1, uint32_t value2, opcode_t opcode){
 void sim_pipe::execute() {
 
    instructT instruct                   = this->instrArray[EX]; 
+   cout << "EX: opcode" << opcode_str[instruct.opcode] << endl;
 
    for(int i = 0; i < NUM_SP_REGISTERS; i++) {
       this->pipeReg[MEM][i]     = UNDEFINED;
@@ -221,6 +224,7 @@ void sim_pipe::execute() {
 bool sim_pipe::memory() {
 
    instructT instruct                     = this->instrArray[MEM]; 
+   cout << "MEM: opcode" << opcode_str[instruct.opcode] << endl;
 
    pipeReg[WB][LMD]                       = UNDEFINED;
    switch(instruct.opcode) {
@@ -259,6 +263,7 @@ bool sim_pipe::memory() {
 
 bool sim_pipe::writeBack() {
    instructT instruct                = this->instrArray[WB]; 
+   cout << "WB: opcode" << opcode_str[instruct.opcode] << endl;
    if (instruct.opcode == EOP){
      return true;
    }

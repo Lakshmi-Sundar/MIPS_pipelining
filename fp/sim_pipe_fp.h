@@ -96,17 +96,19 @@ class sim_pipe_fp{
    public:
       struct gprFileT{
          int            value;
-         bool           busy;
+         int            busy;
       };
 
       struct fpFileT{
          float          value;
-         bool           busy;
+         int            busy;
       };
 
       struct execLaneT{
          instructT      instruct;
          int            ttl;
+         unsigned       b;
+         unsigned       exNpc;
 
          execLaneT(){
             ttl            = 0;
@@ -127,7 +129,7 @@ class sim_pipe_fp{
 
          execUnitT(int numLanes, int latency){
             ASSERT( latency > 0, "Impractical latency found (=%d)", latency );
-            ASSERT( numLanes > 0, "Unsupported numLanes (=%d)", numLanes );
+            ASSERT( numLanes > 0, "Unsupported number of lanes (=%d)", numLanes );
             this->numLanes = numLanes;
             this->latency  = latency;
             //if( lanes != NULL )
@@ -143,6 +145,7 @@ class sim_pipe_fp{
       int               latCount;
       int               numStalls;
       bool              latency;
+      int               instMemSize;
 
       gprFileT          gprFile[NUM_GP_REGISTERS];
       fpFileT           fpFile[NUM_FP_REGISTERS];
@@ -258,7 +261,7 @@ class sim_pipe_fp{
       void write_memory(unsigned address, unsigned value);
 
       unsigned read_memory(unsigned address);
-      instructT execInst(int& count);
+      instructT execInst(int& count, uint32_t& b, uint32_t& npc);
 
       //prints the values of the registers 
       void print_registers();
