@@ -12,7 +12,6 @@ static const char *stage_names[NUM_STAGES] = {"IF", "ID", "EX", "MEM", "WB"};
 map <string, opcode_t> opcode_2str = { {"LW", LW}, {"SW", SW}, {"ADD", ADD}, {"ADDI", ADDI}, {"SUB", SUB}, {"SUBI", SUBI}, {"XOR", XOR}, {"XORI", XORI}, {"OR", OR}, {"ORI", ORI}, {"AND", AND}, {"ANDI", ANDI}, {"MULT", MULT}, {"DIV", DIV}, {"BEQZ", BEQZ}, {"BNEZ", BNEZ}, {"BLTZ", BLTZ}, {"BGTZ", BGTZ}, {"BLEZ", BLEZ}, {"BGEZ", BGEZ}, {"JUMP", JUMP}, {"EOP", EOP}, {"NOP", NOP}, {"LWS", LWS}, {"SWS", SWS}, {"ADDS", ADDS}, {"SUBS", SUBS}, {"MULTS", MULTS}, {"DIVS", DIVS}};
 
 sim_pipe_fp::sim_pipe_fp(unsigned mem_size, unsigned mem_latency){
-   //updating data memory size and the memory latency
    this->dataMemSize  = mem_size;
    this->memLatency   = mem_latency;
    this->instMemory   = NULL;
@@ -23,6 +22,7 @@ sim_pipe_fp::sim_pipe_fp(unsigned mem_size, unsigned mem_latency){
 sim_pipe_fp::~sim_pipe_fp(){
 }
 
+//initialization function for the execution units
 void sim_pipe_fp::init_exec_unit(exe_unit_t exec_unit, unsigned latency, unsigned instances){
    execFp[exec_unit].init(instances, latency+1);
 }
@@ -45,6 +45,7 @@ instructT sim_pipe_fp::fetchInstruction ( unsigned pc ) {
    return instruct;
 }
 
+//------------------------------FETCH OPERATION BEGINS--------------------------------------------------//
 void sim_pipe_fp::fetch(bool stall) {
    // NPC is current PC
    bool cond                       = get_sp_register(COND, MEM);
@@ -64,6 +65,7 @@ void sim_pipe_fp::fetch(bool stall) {
       this->instrArray[ID]         = instruct;
    }
 }
+//------------------------------FETCH OPERATION ENDS----------------------------------------------------//
 
 bool sim_pipe_fp::regBusy(uint32_t regNo, bool isF) {
    return isF ? fpFile[regNo].busy : gprFile[regNo].busy;
@@ -114,6 +116,7 @@ int sim_pipe_fp::exLatency(opcode_t opcode) {
    return execFp[opcodeToExUnit(opcode)].latency;
 }
 
+//------------------------------DECODE OPERATION BEGINS----------------------------------------------------//
 bool sim_pipe_fp::decode() {
    bool stallEx                         = false;
 
@@ -152,6 +155,7 @@ bool sim_pipe_fp::decode() {
          }
       }
    //------------------------ WAW & EX CONTENTION ENDS ------------------------------
+
    //--------------------------- CHECKING FOR LANES BEGIN ---------------------------
    if(!stallEx) {
       bool isFreeLane    = false;
@@ -200,14 +204,14 @@ bool sim_pipe_fp::decode() {
       return (instruct.opcode == EOP || stallBranch);
    }
 }
-
-
+//------------------------------DECODE OPERATION ENDS----------------------------------------------------//
    
 //function to generate address for LW SW instructions
 uint32_t sim_pipe_fp::agen ( instructT instruct) {
    return (instruct.imm + regRead(instruct.src1, instruct.src1F));
 }
 
+//ALU function for floating point operations
 unsigned sim_pipe_fp::aluF (unsigned _value1, unsigned _value2, bool value1F, bool value2F, opcode_t opcode){
    float output;
    float value1 = value1F ? unsigned2float(_value1) : _value1;
@@ -312,7 +316,7 @@ unsigned sim_pipe_fp::alu (unsigned _value1, unsigned _value2, bool value1F, boo
    return output;
 }
 
-
+//To simulate and schedule instructions in the execution units
 instructT sim_pipe_fp::execInst(int& count, uint32_t& b, uint32_t& npc){
    instructT instruct;
    count = 0;
@@ -335,6 +339,7 @@ instructT sim_pipe_fp::execInst(int& count, uint32_t& b, uint32_t& npc){
    return instruct;
 }
 
+//To get the maximum ttl at a particular lane in the execution unit
 int sim_pipe_fp::getMaxTtl() {
    int ttl = 0;
    for(int i = 0; i < EXEC_UNIT_TOTAL; i++){
@@ -345,6 +350,7 @@ int sim_pipe_fp::getMaxTtl() {
    return ttl;
 }
 
+//------------------------------------EXECUTE OPERATION BEGINS----------------------------------//
 void sim_pipe_fp::execute() {
 
    instructT instruct                   = instrArray[EX]; 
@@ -441,7 +447,9 @@ void sim_pipe_fp::execute() {
    this->instrArray[MEM] = instruct;
    memFlag               = memLatency;
 }
+//------------------------------------EXECUTE OPERATION ENDS-----------------------------------//
 
+//------------------------------------MEMORY OPERATION BEGINS----------------------------------//
 bool sim_pipe_fp::memory() {
 
    instructT instruct                     = this->instrArray[MEM]; 
@@ -482,7 +490,9 @@ bool sim_pipe_fp::memory() {
    pipeReg[WB][ALU_OUTPUT]                 = pipeReg[MEM][ALU_OUTPUT];
    return false;
 }
+//------------------------------------MEMORY OPERATION ENDS---------------------------------------//
 
+//------------------------------------WRITEBACK OPERATION BEGINS----------------------------------//
 bool sim_pipe_fp::writeBack() {
    instructT instruct                = this->instrArray[WB]; 
    if (instruct.opcode == EOP){
@@ -499,8 +509,9 @@ bool sim_pipe_fp::writeBack() {
    }
    return false;
 }
+//------------------------------------WRITEBACK OPERATION ENDS-------------------------------------//
 
-//---------------------------------------------RUN SIMULATION--------------------------------------------//
+//---------------------------------------RUN SIMULATION--------------------------------------------//
 void sim_pipe_fp::run(unsigned cycles){
    bool rtc = (cycles == 0);
    while(cycles-- || rtc) {
@@ -513,10 +524,8 @@ void sim_pipe_fp::run(unsigned cycles){
       cycleCount++;
    }
 }
-//---------------------------------------------END OF RUN------------------------------------------------//
-
-
-//---------------------------------------------RESET BLOCK-----------------------------------------------//
+//---------------------------------------------END OF RUN------------------------------------------//
+//---------------------------------------------RESET BLOCK-----------------------------------------//
 void sim_pipe_fp::reset(){
    //initializing data_memory to UNDEFINED
    this->data_memory       = new unsigned char[dataMemSize];
@@ -547,7 +556,6 @@ void sim_pipe_fp::reset(){
       this->pipeReg[i][COND]  = 0;
    }
 }
-
 //-----------------------------------------------END OF RESET BLOCK----------------------------------------//
 
 
@@ -578,6 +586,7 @@ void sim_pipe_fp::print_registers(){
 }
 //-------------------------------------------------PRINT OPERATION ENDS-------------------------------------------------------------------------//
 
+//code to convert the branch label to PC
 int sim_pipe_fp::labelToPC( const char* filename, const char* label, uint32_t pc_index ){
    FILE* temp  = fopen(filename, "r");
    int line    = 0;
@@ -597,6 +606,7 @@ int sim_pipe_fp::labelToPC( const char* filename, const char* label, uint32_t pc
    return ((line - pc_index - 1) * 4);
 }
 
+//----------------------------------------------PARSING OPERATION BEGINS---------------------------------//
 int sim_pipe_fp::parse( const char* filename ){
    FILE* trace;
    char buff[1024], label[495];
@@ -703,7 +713,9 @@ int sim_pipe_fp::parse( const char* filename ){
 
    return lineNo;
 }
+//----------------------------------------------PARSING OPERATION ENDS-----------------------------------//
 
+//code to parse the correct registers
 uint32_t sim_pipe_fp::parseReg( FILE* trace, bool& is_float ){
    uint32_t reg;
    char     regIdentifier, dummy;
@@ -784,7 +796,7 @@ unsigned sim_pipe_fp::get_clock_cycles(){
 }
 
 //-------------------------------------------- SETTER/GETTER UTILS END ----------------------------------------//
-
+//---------------------------------------------READ AND WRITE MEMORY OPERATIONS--------------------------------//
 unsigned sim_pipe_fp::read_memory(unsigned address){
    unsigned value = 0;
    ASSERT( address % 4 == 0, "Unaligned memory access found at address %x", address ); 
@@ -804,3 +816,4 @@ void sim_pipe_fp::write_memory(unsigned address, unsigned value){
    data_memory[address + 2] = value >> 16;
    data_memory[address + 3] = value >> 24;
 }
+//------------------------------------------------------------------------------------------------------------//

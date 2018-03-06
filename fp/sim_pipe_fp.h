@@ -54,7 +54,6 @@ struct instructT{
    bool               dstF;
    bool               src1F;
    bool               src2F;
-   // TODO: Check usage
    bool               is_stall;
    bool               is_branch;
 
@@ -62,7 +61,6 @@ struct instructT{
       nop();
    }
 
-   //DO NOT DELETE HAHAHAHAAHAHAHAHAHAH
    void print(){
       cout << "Opcode: " << opcode_str[opcode] << ", dst: " << dst << ", src1: " << src1 << ", src2: " << src2 << ", imm: " << imm << ", dstValid: " << dstValid << ", src1Valid: " << src1Valid << ", src2Valid: " << src2Valid << ", dstF: " << dstF << ", src1F: " << src1F << ", src2F: " << src2F << ", is_stall: " << is_stall << ", is_branch: " << is_branch << endl;
    }
@@ -90,8 +88,6 @@ struct instructT{
 };
 
 class sim_pipe_fp{
-
-   /* Add the data members required by your simulator's implementation here */
 
    public:
       struct gprFileT{
@@ -151,10 +147,8 @@ class sim_pipe_fp{
 
       instructT         instrArray[NUM_STAGES];
 
-      //data memory - should be initialize to all 0xFF
       unsigned char     *data_memory;
 
-      //memory size in bytes
       unsigned          data_memory_size;
       instructPT        *instMemory;
       unsigned          dataMemSize;
