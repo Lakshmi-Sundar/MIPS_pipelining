@@ -32,7 +32,7 @@ int main(int argc, char **argv){
 
 	mips->init_exec_unit(INTEGER, 0, 1);
 	mips->init_exec_unit(ADDER, 4, 1);
-	mips->init_exec_unit(MULTIPLIER, 9, 1);
+	mips->init_exec_unit(MULTIPLIER, 9, 2);
 	mips->init_exec_unit(DIVIDER, 19, 1);
 
 	//loads program in instruction memory at address 0x10000000

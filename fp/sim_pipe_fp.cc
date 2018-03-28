@@ -143,17 +143,19 @@ bool sim_pipe_fp::decode() {
    }
 
    if(!stallEx) { 
-      for(int j = 0; j < execFp[opcodeToExUnit(instruct.opcode)].numLanes; j++) {
-         execLaneT lane       = execFp[opcodeToExUnit(instruct.opcode)].lanes[j];
-         if( (instruct.dstValid && lane.instruct.dstValid) && // Destinations should be valid
-               (instruct.dst == lane.instruct.dst) && // Reg numbers should match
-               (instruct.dstF == lane.instruct.dstF) && // Both should either be R or F
-               (latency <= lane.ttl && latency != 0) ){ // Latency must be LTE ttl
+      for(int i = 0; i < EXEC_UNIT_TOTAL && !stallEx; i++){
+         for(int j = 0; j < execFp[i].numLanes; j++) {
+            execLaneT lane       = execFp[i].lanes[j];
+            if( (instruct.dstValid && lane.instruct.dstValid) && // Destinations should be valid
+                  (instruct.dst == lane.instruct.dst) && // Reg numbers should match
+                  (instruct.dstF == lane.instruct.dstF) && // Both should either be R or F
+                  (latency <= lane.ttl && latency != 0) ){ // Latency must be LTE ttl
                stallEx     = true;
                break;
             }
          }
       }
+   }
    //------------------------ WAW & EX CONTENTION ENDS ------------------------------
 
    //--------------------------- CHECKING FOR LANES BEGIN ---------------------------
@@ -182,10 +184,11 @@ bool sim_pipe_fp::decode() {
    if( stallEx ){
       // Stalling
       this->instrArray[EX].stall();
-      if(!(instruct.opcode == EOP)) numStalls++;
       for(int i = 0; i < NUM_SP_REGISTERS; i++) {
          this->pipeReg[EX][i]           = UNDEFINED;
       }
+      if(!(instruct.opcode == EOP))  numStalls++;
+      else this->pipeReg[EX][NPC]       = this->pipeReg[ID][NPC];
       return true;
    } 
    else{
