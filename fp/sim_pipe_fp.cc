@@ -9,8 +9,10 @@ using namespace std;
 static const char *reg_names[NUM_SP_REGISTERS] = {"PC", "NPC", "IR", "A", "B", "IMM", "COND", "ALU_OUTPUT", "LMD"};
 static const char *stage_names[NUM_STAGES] = {"IF", "ID", "EX", "MEM", "WB"};
 
+//Map to make strings into Enums - from the parser
 map <string, opcode_t> opcode_2str = { {"LW", LW}, {"SW", SW}, {"ADD", ADD}, {"ADDI", ADDI}, {"SUB", SUB}, {"SUBI", SUBI}, {"XOR", XOR}, {"XORI", XORI}, {"OR", OR}, {"ORI", ORI}, {"AND", AND}, {"ANDI", ANDI}, {"MULT", MULT}, {"DIV", DIV}, {"BEQZ", BEQZ}, {"BNEZ", BNEZ}, {"BLTZ", BLTZ}, {"BGTZ", BGTZ}, {"BLEZ", BLEZ}, {"BGEZ", BGEZ}, {"JUMP", JUMP}, {"EOP", EOP}, {"NOP", NOP}, {"LWS", LWS}, {"SWS", SWS}, {"ADDS", ADDS}, {"SUBS", SUBS}, {"MULTS", MULTS}, {"DIVS", DIVS}};
 
+//Constructor - This function loads up data memory size and latency
 sim_pipe_fp::sim_pipe_fp(unsigned mem_size, unsigned mem_latency){
    this->dataMemSize  = mem_size;
    this->memLatency   = mem_latency;
@@ -19,10 +21,14 @@ sim_pipe_fp::sim_pipe_fp(unsigned mem_size, unsigned mem_latency){
    reset();
 }
 
+//Destructor
 sim_pipe_fp::~sim_pipe_fp(){
 }
 
-//initialization function for the execution units
+//initialization function for the execution units - from the testcase
+//For that particular exec unit - Integer, call init function that also declares
+//the number of instances (array or number of lanes for each unit) and the latency (plus 1
+//to model the extra latency coming with the exec unit).
 void sim_pipe_fp::init_exec_unit(exe_unit_t exec_unit, unsigned latency, unsigned instances){
    execFp[exec_unit].init(instances, latency+1);
 }
@@ -35,7 +41,7 @@ void sim_pipe_fp::load_program(const char *filename, unsigned base_address){
 }
 //---------------------------END OF LOAD PROGRAM--------------------------------------------------------//
 
-//fetching instruction from instruction memory
+//fetching instruction from instruction memory - inst mem is poppulated after parsing the file
 instructT sim_pipe_fp::fetchInstruction ( unsigned pc ) {
    int      index     = (pc - this->baseAddress)/4;
    ASSERT((index >= 0) && (index < instMemSize), "out of bound access of instruction memory %d", index);
@@ -54,23 +60,28 @@ void sim_pipe_fp::fetch(bool stall) {
    uint32_t currentFetchPC         = this->pipeReg[IF][PC];
 
 
-   // The following if condition will not happen in actual RTL
+   //if there is no stall - fetch instruction. 
    if( !stall ){
       instructT instruct           = fetchInstruction(currentFetchPC);
       if(instruct.opcode != EOP )
+         //if the instruction is not end of file, then set the current fetch PC to PC+4, 
+	 //while propogating the NPC to Decode
          set_sp_register(PC, IF, currentFetchPC + 4);
 
       this->pipeReg[ID][NPC]       = this->pipeReg[IF][PC];
 
+      //propogating the instruction to next stage as in pipeline
       this->instrArray[ID]         = instruct;
    }
 }
 //------------------------------FETCH OPERATION ENDS----------------------------------------------------//
 
+//returns if the register is busy
 bool sim_pipe_fp::regBusy(uint32_t regNo, bool isF) {
    return isF ? fpFile[regNo].busy : gprFile[regNo].busy;
 }
 
+//Returns if any of the integer units has a branch instruction
 bool sim_pipe_fp::intBranch(){
    for(int i = 0; i < execFp[INTEGER].numLanes; i++) {
       if( execFp[INTEGER].lanes[i].instruct.is_branch ) {
@@ -80,6 +91,7 @@ bool sim_pipe_fp::intBranch(){
    return false;
 }
 
+//This function determines the exec unit based on the opcode
 exe_unit_t sim_pipe_fp::opcodeToExUnit(opcode_t opcode){
    exe_unit_t unit;
    switch( opcode ){
@@ -112,6 +124,8 @@ exe_unit_t sim_pipe_fp::opcodeToExUnit(opcode_t opcode){
    return unit;
 }
 
+
+//Returns the latency for a particular opcode
 int sim_pipe_fp::exLatency(opcode_t opcode) {
    return execFp[opcodeToExUnit(opcode)].latency;
 }
@@ -120,18 +134,27 @@ int sim_pipe_fp::exLatency(opcode_t opcode) {
 bool sim_pipe_fp::decode() {
    bool stallEx                         = false;
 
+   //get instruction from pipeline of Decode
    instructT instruct                   = this->instrArray[ID];
+
+   //get latency of the opcode (unless is a stall)
    int latency                          = instruct.is_stall ? 0 : exLatency(instruct.opcode);
+
+   //propogate NPC to next stage
    this->pipeReg[EX][NPC]               = this->pipeReg[ID][NPC];
 
 
    //------------------------------ RAW BEGIN --------------------------------------
+   //Stall if the source registers are busy (being used as destination by an inst ahead)
    if( (instruct.src1Valid && regBusy(instruct.src1, instruct.src1F)) ||
          (instruct.src2Valid && regBusy(instruct.src2, instruct.src2F)) ) {
       stallEx                 = true;
    }
    //------------------------------- RAW ENDS ---------------------------------------
+
    //----------------------- WAW & EX CONTENTION BEGINS -----------------------------
+   //if all of exec unit lanes are full/has instruction with ttl == latency - stall
+   //To avoid contention at the WB stage, if any unit has ttl == latency, stall before issuing.
    for(int i = 0; i < EXEC_UNIT_TOTAL && !stallEx; i++){
       for(int j = 0; j < execFp[i].numLanes; j++){
          execLaneT lane = execFp[i].lanes[j];
@@ -142,6 +165,9 @@ bool sim_pipe_fp::decode() {
       }
    }
 
+   //if The instruction in the Exec Units ahead have their latency
+   //less than the following instruction with same destination, there can be WAW hazard. So stall 
+   //in that case.
    if(!stallEx) { 
       for(int i = 0; i < EXEC_UNIT_TOTAL && !stallEx; i++){
          for(int j = 0; j < execFp[i].numLanes; j++) {
@@ -159,6 +185,8 @@ bool sim_pipe_fp::decode() {
    //------------------------ WAW & EX CONTENTION ENDS ------------------------------
 
    //--------------------------- CHECKING FOR LANES BEGIN ---------------------------
+   //To find a lane in an EXEC unit that is free - check if ttl == 0. No instruction
+   //is in that functional unit. If you do not find any free lane, stall
    if(!stallEx) {
       bool isFreeLane    = false;
       for(int j = 0; j < execFp[opcodeToExUnit(instruct.opcode)].numLanes; j++){
@@ -170,11 +198,16 @@ bool sim_pipe_fp::decode() {
       stallEx            = !isFreeLane;
    }
    //--------------------------- CHECKING FOR LANES ENDS ----------------------------
+
    //-------------------------- BRANCH CONTROL BEGINS -------------------------------
+   //If branch is in decode, execute pipeline or in any of the exec units, then stall.
    bool stallBranch                     = instruct.is_branch || instrArray[EX].is_branch || intBranch();
+
    if( stallBranch && !stallEx ) { 
+   //stall the decode stage
       this->instrArray[ID].stall();
       if(!(instruct.opcode == EOP)) numStalls++;
+      //invalidate the pipeline registers
       for(int i = 0; i < NUM_SP_REGISTERS; i++) {
          this->pipeReg[ID][i]           = UNDEFINED;
       }
@@ -182,7 +215,7 @@ bool sim_pipe_fp::decode() {
    //--------------------------- BRANCH CONTROL ENDS --------------------------------
 
    if( stallEx ){
-      // Stalling
+      // Stalling exec stage
       this->instrArray[EX].stall();
       for(int i = 0; i < NUM_SP_REGISTERS; i++) {
          this->pipeReg[EX][i]           = UNDEFINED;
@@ -518,9 +551,12 @@ bool sim_pipe_fp::writeBack() {
 void sim_pipe_fp::run(unsigned cycles){
    bool rtc = (cycles == 0);
    while(cycles-- || rtc) {
+   //stop execution at end
       if(writeBack()) return;
+      //stalling for mem latency
       if( !memory() ) {
          execute();
+	 //stalling for branch or RAW hazards
          bool stall          = decode();
          fetch(stall);
       }

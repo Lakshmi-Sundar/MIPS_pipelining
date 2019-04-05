@@ -23,6 +23,7 @@
 #define NUM_OPCODES 29
 #define NUM_STAGES 5
 
+//Assertion Macro
 #define ASSERT( condition, statement, ... ) \
    if( !(condition) ) { \
       printf( "[ASSERT] In File: %s, Line: %d => " #statement "\n", __FILE__, __LINE__, ##__VA_ARGS__ ); \
@@ -30,16 +31,21 @@
    }
 
 using namespace std;
+
+//enumerator for special purpose registers
 typedef enum {PC, NPC, IR, A, B, IMM, COND, ALU_OUTPUT, LMD} sp_register_t;
 
 // The NOP instruction should be automatically inserted by the processor to implement pipeline bubbles
 typedef enum {ADD, SUB, XOR, OR, AND, MULT, DIV, BEQZ, BNEZ, BLTZ, BGTZ, BLEZ, BGEZ, ADDI, SUBI, XORI, ORI, ANDI, JUMP, EOP, NOP, LW, SW, LWS, SWS, ADDS, SUBS, MULTS, DIVS} opcode_t;
+
+//Array consists of string in the order of enum declared above
 const string opcode_str[] = {"ADD", "SUB", "XOR", "OR", "AND", "MULT", "DIV", "BEQZ", "BNEZ", "BLTZ", "BGTZ", "BLEZ", "BGEZ", "ADDI", "SUBI", "XORI", "ORI", "ANDI", "JUMP", "EOP", "NOP", "LW", "SW", "LWS", "SWS", "ADDS", "SUBS", "MULTS", "DIVS"};
 
 typedef enum {IF, ID, EX, MEM, WB} stage_t;
 
 typedef enum {INTEGER, ADDER, MULTIPLIER, DIVIDER, EXEC_UNIT_TOTAL} exe_unit_t;
 
+//Pointer of type instructT - this consists of elements required in an instruction
 typedef struct instructT* instructPT;
 
 struct instructT{
@@ -57,14 +63,17 @@ struct instructT{
    bool               is_stall;
    bool               is_branch;
 
+   //"constructor" type which is called everytime an instruction is declared
    instructT(){
       nop();
    }
 
+   //print statement which prints the instruction details - used for debugging
    void print(){
       cout << "Opcode: " << opcode_str[opcode] << ", dst: " << dst << ", src1: " << src1 << ", src2: " << src2 << ", imm: " << imm << ", dstValid: " << dstValid << ", src1Valid: " << src1Valid << ", src2Valid: " << src2Valid << ", dstF: " << dstF << ", src1F: " << src1F << ", src2F: " << src2F << ", is_stall: " << is_stall << ", is_branch: " << is_branch << endl;
    }
 
+   //NOP function which clears everything of an instruction and opcode is "NOP"
    void nop(){
       opcode     = NOP;
       dst        = UNDEFINED;
@@ -81,37 +90,46 @@ struct instructT{
       src2F      = false;
    }
 
+   //Stall is propogating NOP with a flag that makes "is_stall" true
    void stall(){
       nop();
       is_stall   = true;
    }
 };
 
+//a class of the floating point pipeline
 class sim_pipe_fp{
 
    public:
+      //general purpose registers with busy bit
       struct gprFileT{
          int            value;
          int            busy;
       };
-
+ 
+      //special purpose registers with busy bit
       struct fpFileT{
          float          value;
          int            busy;
       };
 
+      //execution lane structure with instruction, time to live, B (register val) and NPC (PC in exec)
       struct execLaneT{
          instructT      instruct;
          int            ttl;
          unsigned       b;
          unsigned       exNpc;
 
+         //Constructor here makes ttl = 0
          execLaneT(){
             ttl            = 0;
          }
 
       };
 
+      //execution unit - each unit (integer, fp, add, mult etc) fall into this category
+      //The Lanes pointer is an array of lanes (number of units) of that particular unit
+      //The number of lanes is the length of the array(testcase) and latency is as mentioned by the testcase
       struct execUnitT{
          execLaneT      *lanes;
          int            numLanes;
@@ -123,6 +141,9 @@ class sim_pipe_fp{
             latency        = 0;
          }
 
+         //initializing the number of lanes - "realloc" helps add multiple items to the 
+	 //pre-existing one - hence the use of pointer instead of array for dynamic
+	 //memory allocation
          void init(int numLanes, int latency){
             ASSERT( latency > 0, "Impractical latency found (=%d)", latency );
             ASSERT( numLanes > 0, "Unsupported number of lanes (=%d)", numLanes );
@@ -133,6 +154,7 @@ class sim_pipe_fp{
       };
       
 
+      //misc variables for stats etc
       int               cycleCount;
       int               instCount;
       int               latCount;
@@ -143,15 +165,22 @@ class sim_pipe_fp{
       gprFileT          gprFile[NUM_GP_REGISTERS];
       fpFileT           fpFile[NUM_FP_REGISTERS];
       execUnitT         execFp[EXEC_UNIT_TOTAL];
+
+      //This holds the Spl Purpose Regs for each stage
       uint32_t          pipeReg[NUM_STAGES][NUM_SP_REGISTERS];
 
+      //This holds the instruction in each of the 4 stages - simulating the pipeline
+      //between the stages
       instructT         instrArray[NUM_STAGES];
 
+      //data memory
       unsigned char     *data_memory;
-
       unsigned          data_memory_size;
+
+      //instruction memory
       instructPT        *instMemory;
       unsigned          dataMemSize;
+
       unsigned          memLatency;
       unsigned          memFlag;
       unsigned          baseAddress;
